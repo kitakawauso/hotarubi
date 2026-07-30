@@ -121,12 +121,17 @@ export function initHighlightPanel(containerSelector: string): void {
     <div id="hl-timing">${TIMING_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
 
     <p class="hl-group">見た目</p>
-    <div class="hl-colors" style="margin-bottom:10px;">
+    <div class="hl-row">
+      <label style="min-width:auto;"><input type="checkbox" id="hl-fill-on"> 塗りつぶす</label>
+      <label style="min-width:auto;"><input type="checkbox" id="hl-border-on"> 枠線を描く</label>
+    </div>
+    <div class="hl-colors" style="margin:8px 0 10px;">
       <label>読まれた札 <input type="color" id="hl-target-color" value="${cfg.targetColor}"></label>
       <label>候補 <input type="color" id="hl-candidate-color" value="${cfg.candidateColor}"></label>
       <label>枠線 <input type="color" id="hl-border-color" value="${cfg.borderColor}"></label>
     </div>
     <div id="hl-appearance">${APPEARANCE_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
+    <p id="hl-shape-note" style="font-size:11px;color:var(--text3);margin:2px 0 0;line-height:1.6;"></p>
 
     <p class="hl-group">自動再生</p>
     <div class="hl-row">
@@ -198,6 +203,29 @@ export function initHighlightPanel(containerSelector: string): void {
     const el = q<HTMLInputElement>(sel)
     el.addEventListener('input', () => _update({ [key]: el.value } as Partial<HighlightConfig>))
   }
+
+  // --- 塗り / 枠線の有無 ---
+  const fillOn = q<HTMLInputElement>('#hl-fill-on')
+  const borderOn = q<HTMLInputElement>('#hl-border-on')
+  const shapeNote = q<HTMLElement>('#hl-shape-note')
+  fillOn.checked = cfg.fillEnabled
+  borderOn.checked = cfg.borderEnabled
+
+  const syncShape = () => {
+    const opacityRow = container.querySelector<HTMLInputElement>('input[data-key="fillOpacity"]')
+    const widthRow = container.querySelector<HTMLInputElement>('input[data-key="borderWidth"]')
+    if (opacityRow) opacityRow.disabled = !fillOn.checked
+    if (widthRow) widthRow.disabled = !borderOn.checked
+
+    shapeNote.textContent =
+      !fillOn.checked && !borderOn.checked ? '※ どちらも外すと何も見えません。'
+      : !fillOn.checked ? '※ 枠線だけで表示します。枠線は札の色で描かれます。'
+      : ''
+  }
+
+  fillOn.addEventListener('change', () => { _update({ fillEnabled: fillOn.checked }); syncShape() })
+  borderOn.addEventListener('change', () => { _update({ borderEnabled: borderOn.checked }); syncShape() })
+  syncShape()
 
   // --- 自動再生 ---
   const auto = q<HTMLInputElement>('#hl-autoplay')

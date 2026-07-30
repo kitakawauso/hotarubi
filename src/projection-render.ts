@@ -264,14 +264,17 @@ function fillCard(
 ): void {
   const { offsetX: ox, offsetY: oy } = hl
 
-  ctx.globalAlpha = hl.fillOpacity
-  ctx.fillStyle = color
-  pathQuad(ctx, q, ox, oy)
-  ctx.fill()
+  if (hl.fillEnabled) {
+    ctx.globalAlpha = hl.fillOpacity
+    ctx.fillStyle = color
+    pathQuad(ctx, q, ox, oy)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
 
-  ctx.globalAlpha = 1
-  if (hl.borderWidth > 0) {
-    ctx.strokeStyle = hl.borderColor
+  if (hl.borderEnabled && hl.borderWidth > 0) {
+    // 塗りを消したときは枠線も札の色で描く（どの札かが分からなくなるため）
+    ctx.strokeStyle = hl.fillEnabled ? hl.borderColor : color
     ctx.lineWidth = hl.borderWidth
     pathQuad(ctx, q, ox, oy)
     ctx.stroke()

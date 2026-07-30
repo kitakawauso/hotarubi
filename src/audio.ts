@@ -72,6 +72,7 @@ let _current: number | null = null   // いま音声を鳴らしている札
 let _prev: number | null = null      // 次に下の句を読む札
 let _next: number | null = null      // 次に上の句を読む札（取り札）
 let _started = false                 // 序歌を読み終えたか
+let _resumeFrom: Phase = null        // 停止したときのフェーズ（再開位置の判断に使う）
 
 let _audio: HTMLAudioElement | null = null
 let _timers: ReturnType<typeof setTimeout>[] = []
@@ -246,30 +247,39 @@ function _enterKami(): void {
   _emit('kami_start', _current, _readCount - 1, _effectiveKimariRecord())
 
   _play(_current, 1, () => {
-    const done = _current!
-    _emit('kami_end', done, _readCount - 1)
-    clearHighlight()
-
-    // 読まれた札を場から取り除く（場に無ければ何もしない）
-    removeCard(done)
-
-    _prev = done
-    _pickNext()
-    _current = null
-    _phase = null
+    _finishKami()
 
     const cfg = getHighlight()
-    if (cfg.autoPlay && _next !== null) {
+    if (cfg.autoPlay) {
       _updateUI()
       _autoPlayTimer = setTimeout(() => { _autoPlayTimer = null; _enterShimo() }, cfg.autoPlayIntervalSec * 1000)
-    } else if (_next === null) {
-      _endSession()
     } else {
-      // 手動: いったん待機に戻り、次の「▶ 進む」で下の句から再開する
+      // 手動: いったん待機に戻り、次の再生でこの札の下の句から続ける
       _playing = false
       _updateUI()
     }
   })
+}
+
+/**
+ * 上の句を読み終えた（または途中で止めた）ときの後始末。
+ * その札を取り札として確定させ、次の札を抽選する。
+ * 直後に _prev = その札 になるので、次は必ずその札の下の句から始まる。
+ */
+function _finishKami(): void {
+  const done = _current
+  if (done === null) return
+
+  _emit('kami_end', done, _readCount - 1)
+  clearHighlight()
+
+  // 読まれた札を場から取り除く（場に無ければ何もしない）
+  removeCard(done)
+
+  _prev = done
+  _pickNext()
+  _current = null
+  _phase = null
 }
 
 function _endSession(): void {
@@ -295,6 +305,7 @@ export function startReading(poemIds?: number[]): void {
   _prev = null
   _next = null
   _started = false
+  _resumeFrom = null
   _playing = true
 
   if (_onSessionStart) _onSessionStart(_sessionType, ids)
@@ -302,21 +313,53 @@ export function startReading(poemIds?: number[]): void {
   _enterJoka()
 }
 
-/** 待機中に押されたとき: 序歌からか、次の札の下の句からか */
+/**
+ * 待機中に再生を押されたときの再開位置。
+ *
+ *   下の句の途中で停止 → その下の句の最初から読み直す
+ *   上の句の途中で停止 → その札は読んだものとして扱い、
+ *                        まだ読んでいないその札の下の句から始めて次へ進む
+ *   無音中に停止       → もう一度その間を取ってから上の句へ
+ *   序歌の途中で停止   → 序歌の上の句／下の句の頭から
+ */
 export function resumeReading(): void {
   if (_playing) return
   _playing = true
-  if (!_started) { _enterJoka(); return }
+
+  const from = _resumeFrom
+  _resumeFrom = null
+
+  if (!_started) {
+    // 序歌の下の句の途中で止めた場合だけ、下の句からやり直す
+    if (from === 'joka_shimo' || from === 'joka_silence') _enterJokaShimo()
+    else _enterJoka()
+    return
+  }
+
+  if (from === 'silence') { _enterSilence(); return }
+
+  // shimo で止めた場合も、kami で止めた場合も、通常の待機からも、
+  // 次に読むのは _prev の下の句になる
   _enterShimo()
 }
 
 export function stopReading(): void {
+  const phase = _phase
   _clearTimers()
-  clearHighlight()
   if (_audio) { _audio.pause(); _audio.onended = null }
+
+  if (phase === 'kami') {
+    // 上の句の途中。その札は読み終えた扱いにして、次はその札の下の句から。
+    _finishKami()
+    _resumeFrom = null
+  } else {
+    _resumeFrom = phase
+    clearHighlight()
+    _phase = null
+    _current = null
+  }
+
   _playing = false
-  _phase = null
-  _current = null
   _updateUI()
 }
 
@@ -327,6 +370,7 @@ export function resetReading(): void {
   _prev = null
   _next = null
   _started = false
+  _resumeFrom = null
   _emit('session_end', 0, _readCount)
   _updateUI()
 }
@@ -357,10 +401,14 @@ function _updateUI(): void {
 
   if (_playing) {
     btnPlay.textContent = '■ 停止'
-  } else if (_started) {
-    btnPlay.textContent = '▶ 次の札へ'
+  } else if (!_started) {
+    btnPlay.textContent = _resumeFrom ? '▶ 序歌から再開' : '▶ 読み上げ開始'
+  } else if (_resumeFrom === 'shimo') {
+    btnPlay.textContent = '▶ 下の句をもう一度'
+  } else if (_resumeFrom === 'silence') {
+    btnPlay.textContent = '▶ 再開'
   } else {
-    btnPlay.textContent = '▶ 読み上げ開始'
+    btnPlay.textContent = '▶ 次の札へ'
   }
 
   phase.textContent = _phase ? (PHASE_LABEL[_phase] ?? _phase) : '待機中'

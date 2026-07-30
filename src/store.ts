@@ -65,7 +65,11 @@ export interface HighlightConfig {
   targetColor: string
   /** 決まり字が一致する他の札の色（mode=kimariji_stages のみ） */
   candidateColor: string
+  /** 塗りつぶすか */
+  fillEnabled: boolean
   fillOpacity: number
+  /** 枠線を描くか */
+  borderEnabled: boolean
   borderColor: string
   borderWidth: number
   /** 実際の札とのズレ補正（投影キャンバス px） */
@@ -101,7 +105,9 @@ export const DEFAULT_HIGHLIGHT: HighlightConfig = {
   silenceSec: 1.0,
   targetColor: '#00ff00',
   candidateColor: '#00aa55',
+  fillEnabled: true,
   fillOpacity: 0.85,
+  borderEnabled: true,
   borderColor: '#ffffff',
   borderWidth: 2,
   offsetX: 0,

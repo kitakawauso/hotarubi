@@ -10,6 +10,10 @@ let _active: Settings = { name: 'デフォルト', ...DEFAULT_SETTINGS }
 
 export function getActiveSettings(): Settings { return _active }
 
+// 投影ウィンドウ起動時の再送用。設定タブを一度も開いていなくても
+// DEFAULT_SETTINGS が入っているのでそのまま送れる。
+export function broadcastActiveSettings(): void { setActiveSettings(_active) }
+
 export function setActiveSettings(s: Settings): void {
   _active = s
   // audio.ts に反映

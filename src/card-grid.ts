@@ -35,7 +35,7 @@ export function onArrangementChange(cb: ChangeHandler): () => void {
 
 function _notifyChange(): void {
   for (const h of [..._changeHandlers]) h()
-  _broadcastArrangement()
+  broadcastArrangement()
 }
 
 // ============================================================
@@ -55,7 +55,9 @@ export function setModalOpener(fn: ModalOpener): void { _openModal = fn }
 // ============================================================
 const _projChannel = new BroadcastChannel('hotarubi-projection')
 
-function _broadcastArrangement(): void {
+// 投影ウィンドウは開いた時点の状態を持っていないため、配置変更時だけでなく
+// 投影側から hello を受け取ったときにも呼び出して現在の配置を送り直す。
+export function broadcastArrangement(): void {
   const { self, enemy } = getArrangement()
   _projChannel.postMessage({
     type: 'state',
@@ -93,13 +95,13 @@ export function setArrangement(self: ArrangementCard[], enemy: ArrangementCard[]
   _renderAll()
 }
 
-export function removeCard(poemId: number, compact = false): void {
+export function removeCard(poemId: number): void {
   for (let f = 0; f < 2; f++) {
     for (let r = 0; r < 3; r++) {
       const col = _grid[f][r].indexOf(poemId)
       if (col >= 0) {
         _grid[f][r][col] = null
-        if (compact) _compactRow(f, r)
+        if (_compactMode) _compactRow(f, r)
         _notifyChange()
         _renderAll()
         return
@@ -202,9 +204,10 @@ let _dragSrc: { field: number; row: number; col: number } | null = null
 // レンダリング
 // ============================================================
 let _container: HTMLElement | null = null
-let _compactMode = false
 
-export function setCompactMode(enabled: boolean): void { _compactMode = enabled }
+// 端寄せ自動。ツールバーのチェックボックスが唯一の書き込み元で、
+// 札が取られた（removeCard）ときに参照される。
+let _compactMode = false
 
 function _countCards(field: number): number {
   let n = 0

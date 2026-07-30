@@ -15,8 +15,10 @@ export const JOUKA_ID = 0
 export const audioPath = (poemId: number, part: 1 | 2): string =>
   `audio/readers/@03-Yamashita/@03-Yamashita_${String(poemId).padStart(3, '0')}_${part}.ogg`
 
+// 画像ファイル名の番号は札番号そのもの（torifuda_F_0.jpeg は白紙札）。
+// 0-99 ではなく 0-100 の101枚ある点に注意。
 export const cardImagePath = (poemId: number): string =>
-  `images/torifuda/torifuda_F_${poemId - 1}.jpeg`
+  `images/torifuda/torifuda_F_${poemId}.jpeg`
 
 export const cardBackPath = (): string =>
   `images/torifuda/torifuda_B.jpeg`

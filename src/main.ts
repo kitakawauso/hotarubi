@@ -4,19 +4,18 @@
 
 import { initDB } from './db'
 import { loadPoems } from './data'
-import { initCardGrid, setModalOpener } from './card-grid'
+import { initCardGrid, setModalOpener, broadcastArrangement } from './card-grid'
 import { initReading, setSessionType } from './audio'
-import { initCalibration } from './calibration'
+import { initCalibration, openProjectionWindow, broadcastCalibration } from './calibration'
 import { initPosture } from './posture'
 import { initPlayers } from './player'
-import { initReview } from './review'
-import { initSettings } from './settings'
+import { initSettings, broadcastActiveSettings } from './settings'
 import { initSession } from './session'
 
 // ============================================================
 // タブルーター
 // ============================================================
-const TABS = ['players', 'competitive', 'memorize', 'calibration', 'review', 'settings'] as const
+const TABS = ['players', 'competitive', 'memorize', 'calibration', 'settings'] as const
 type Tab = typeof TABS[number]
 
 let _currentTab: Tab = 'players'
@@ -90,13 +89,6 @@ function initTabOnce(tab: Tab): void {
       if (!_initialized.has('calibration')) {
         _initialized.add('calibration')
         initCalibration('#calibration-ui')
-      }
-      break
-
-    case 'review':
-      if (!_initialized.has('review')) {
-        _initialized.add('review')
-        initReview('#review-ui')
       }
       break
 
@@ -197,6 +189,19 @@ async function boot(): Promise<void> {
     // モード選択ボタン（プレイヤー画面）
     document.getElementById('btn-start-competitive')!.addEventListener('click', () => switchTab('competitive'))
     document.getElementById('btn-start-memorize')!.addEventListener('click', () => switchTab('memorize'))
+
+    // 投影ウィンドウ: どのタブからでも開けるようにタブバーに常設
+    document.getElementById('btn-open-projection')!.addEventListener('click', openProjectionWindow)
+
+    // 投影ウィンドウが起動を知らせてきたら、現在の配置・調整・設定を送り直す。
+    // これが無いと、札を並べたあとに投影ウィンドウを開いても何も映らない。
+    const projChannel = new BroadcastChannel('hotarubi-projection')
+    projChannel.addEventListener('message', e => {
+      if ((e.data as { type?: string })?.type !== 'hello') return
+      broadcastArrangement()
+      broadcastCalibration()
+      broadcastActiveSettings()
+    })
 
     // モーダルを閉じる
     document.getElementById('modal-close')!.onclick = closeModal

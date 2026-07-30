@@ -5,7 +5,7 @@
 import { db } from './db'
 import type { Settings } from './db'
 import { onReadingEvent, setSessionStartCallback } from './audio'
-import { getArrangement, removeCard, setCompactMode } from './card-grid'
+import { getArrangement, removeCard } from './card-grid'
 
 // ============================================================
 // 状態
@@ -14,10 +14,8 @@ let _sessionId: number | null = null
 let _sessionStartMs = 0
 const _logIds = new Map<number, number>()  // poem_id → reading_log.id
 let _currentSettings: Settings | null = null
-let _compactEnabled = false
 
 export function getCurrentSessionId(): number | null { return _sessionId }
-export function getSessionSettings(): Settings | null { return _currentSettings }
 
 // ============================================================
 // セッション操作
@@ -29,7 +27,6 @@ export function startSession(
 ): number {
   _sessionStartMs = Date.now()
   _currentSettings = settings
-  _compactEnabled = false
 
   const snapshot = settings ? { ...settings } : {}
   _sessionId = db.insertSession({
@@ -45,7 +42,6 @@ export function startSession(
   db.insertArrangement(_sessionId, arr.self, arr.enemy)
 
   _logIds.clear()
-  setCompactMode(false)
 
   return _sessionId
 }
@@ -55,11 +51,6 @@ export function endSession(): void {
   db.endSession(_sessionId)
   _sessionId = null
   _currentSettings = null
-}
-
-export function enableCompactMode(): void {
-  _compactEnabled = true
-  setCompactMode(true)
 }
 
 // ============================================================
@@ -105,8 +96,8 @@ export function initSession(): void {
         if (logId !== undefined) {
           db.updateReadingLogTimes(logId, { lower_end_ms: elapsed })
         }
-        // カードを場から取り除く
-        removeCard(e.poemId, _compactEnabled)
+        // カードを場から取り除く（端寄せするかは card-grid 側のチェックボックスに従う）
+        removeCard(e.poemId)
 
         // 配置スナップショットを保存（読まれるたびに）
         const arr = getArrangement()

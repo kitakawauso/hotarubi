@@ -61,6 +61,16 @@
         background: var(--accent);
       }
 
+      /* 投影ウィンドウを開くボタン（タブではなく常設。どのタブからでも押せる） */
+      #btn-open-projection {
+        margin-left: auto;
+        align-self: center;
+        margin-right: 10px;
+        flex-shrink: 0;
+        padding: 5px 14px;
+        font-size: 12px;
+      }
+
       /* ======= コンテンツエリア ======= */
       #app { display: flex; flex-direction: column; width: 100%; height: 100%; }
       #content { flex: 1; overflow: hidden; position: relative; }
@@ -262,8 +272,8 @@
         <button class="tab-btn" data-tab="competitive">競技</button>
         <button class="tab-btn" data-tab="memorize">暗記</button>
         <button class="tab-btn" data-tab="calibration">投影調整</button>
-        <button class="tab-btn" data-tab="review">振り返り</button>
         <button class="tab-btn" data-tab="settings">設定</button>
+        <button id="btn-open-projection" title="投影用の表示専用ウィンドウを開きます">投影ウィンドウ</button>
       </nav>
 
       <div id="content">
@@ -317,12 +327,6 @@
         <div class="view" id="view-calibration">
           <p class="section-title">投影調整</p>
           <div id="calibration-ui"></div>
-        </div>
-
-        <!-- ===== 振り返り ===== -->
-        <div class="view" id="view-review">
-          <p class="section-title">振り返り</p>
-          <div id="review-ui"></div>
         </div>
 
         <!-- ===== 設定 ===== -->

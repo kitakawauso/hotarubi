@@ -27,6 +27,19 @@ function _broadcast(): void {
   _projChannel.postMessage({ type: 'calibration', calibration: _calibration })
 }
 
+// 投影ウィンドウ起動時の再送用。投影調整タブを一度も開いていない場合は
+// corners が null のままだが、その場合投影側は画面フィット表示になる。
+export function broadcastCalibration(): void { _broadcast() }
+
+// 投影ウィンドウの開閉。タブバーの常設ボタンと投影調整タブの両方から呼ぶ。
+export function openProjectionWindow(): void {
+  if (_projWin && !_projWin.closed) {
+    _projWin.focus()
+  } else {
+    _projWin = window.open('projection.html', 'hotarubi-projection', 'width=1280,height=800')
+  }
+}
+
 // ============================================================
 // プレビュー描画
 // ============================================================
@@ -227,13 +240,7 @@ export function initCalibration(containerSelector: string): void {
   window.addEventListener('mouseup', _onMouseUp)
 
   // 投影ウィンドウを開く
-  container.querySelector('#cal-open-proj')!.addEventListener('click', () => {
-    if (_projWin && !_projWin.closed) {
-      _projWin.focus()
-    } else {
-      _projWin = window.open('projection.html', 'hotarubi-projection', 'width=1280,height=800')
-    }
-  })
+  container.querySelector('#cal-open-proj')!.addEventListener('click', openProjectionWindow)
 
   // リセット
   container.querySelector('#cal-reset')!.addEventListener('click', () => {

@@ -149,7 +149,11 @@ function makeTransform(
 
 // ============================================================
 // スロットの四隅を求める
-// 敵陣（field=0, 上半分）は論理座標を反転して 180° 回転させる。
+//
+// 行・列の向きは敵陣も自陣も同じ。札配置タブのグリッドがそのまま
+// 盤面の見取り図になっており、そこで左上に置いた札は投影でも左上で光る。
+// （以前は敵陣だけ論理座標を 180° 反転していたため、配置画面と
+//   投影で光る位置が点対称にずれていた。）
 // ============================================================
 type Quad = [
   { x: number; y: number }, { x: number; y: number },
@@ -158,23 +162,13 @@ type Quad = [
 
 function slotQuad(
   isEnemy: boolean, row: number, col: number,
-  logW: number, fieldH: number, rowGapMm: number, fieldGapMm: number,
+  _logW: number, fieldH: number, rowGapMm: number, fieldGapMm: number,
   toScreen: Transform
 ): Quad {
   const baseY = isEnemy ? 0 : fieldH + fieldGapMm
   const ly = baseY + row * (CARD_H_MM + rowGapMm)
   const lx = col * CARD_W_MM
 
-  if (isEnemy) {
-    const rlx = logW - lx - CARD_W_MM
-    const rly = fieldH - (ly - baseY) - CARD_H_MM
-    return [
-      toScreen(rlx + CARD_W_MM, rly + CARD_H_MM),
-      toScreen(rlx,             rly + CARD_H_MM),
-      toScreen(rlx,             rly),
-      toScreen(rlx + CARD_W_MM, rly),
-    ]
-  }
   return [
     toScreen(lx,              ly),
     toScreen(lx + CARD_W_MM,  ly),

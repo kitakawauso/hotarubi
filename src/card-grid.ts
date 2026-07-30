@@ -16,6 +16,8 @@ export type { ArrangementCard }
 // ============================================================
 type Slot = number | null  // poem_id または空
 
+const COLS = 16
+
 // grid[field][row][col]: field 0=自陣, 1=敵陣
 let _grid: Slot[][][] = [
   [new Array(16).fill(null), new Array(16).fill(null), new Array(16).fill(null)],
@@ -96,7 +98,7 @@ export function removeCard(poemId: number): void {
       const col = _grid[f][r].indexOf(poemId)
       if (col >= 0) {
         _grid[f][r][col] = null
-        if (_compactMode) _compactRow(f, r)
+        if (_compactMode) _compactRow(f, r, col)
         _notifyChange()
         _renderAll()
         return
@@ -105,15 +107,32 @@ export function removeCard(poemId: number): void {
   }
 }
 
-function _compactRow(field: number, row: number): void {
-  const cards = _grid[field][row].filter(s => s !== null) as number[]
-  const newRow = new Array(16).fill(null)
-  let left = 0, right = 15
-  for (let i = 0; i < cards.length; i++) {
-    if (i % 2 === 0) newRow[left++] = cards[i]
-    else             newRow[right--] = cards[i]
+/**
+ * 端寄せ（送り）。出札があった段だけを詰める。
+ *
+ * 中心（列8）を境に、出札が左側なら段の札を1つずつ左へ、
+ * 右側なら1つずつ右へ寄せる。動くのは空いた位置の外側にある札だけで、
+ * それぞれちょうど1マスずつ移動する。
+ *
+ *   例) 左側の列3が出札        [A B C _ D E . . .]
+ *       → 右にある札が1つ左へ  [A B C D E _ . . .]
+ *
+ *   例) 右側の列12が出札        [. . . H I _ J K]
+ *       → 左にある札が1つ右へ  [. . . _ H I J K]
+ */
+function _compactRow(field: number, row: number, removedCol: number): void {
+  const r = _grid[field][row]
+  const toLeft = removedCol < COLS / 2
+
+  if (toLeft) {
+    // 空いた位置より右の札を1つずつ左へ
+    for (let c = removedCol; c < COLS - 1; c++) r[c] = r[c + 1]
+    r[COLS - 1] = null
+  } else {
+    // 空いた位置より左の札を1つずつ右へ
+    for (let c = removedCol; c > 0; c--) r[c] = r[c - 1]
+    r[0] = null
   }
-  _grid[field][row] = newRow
 }
 
 // ============================================================

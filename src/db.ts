@@ -6,9 +6,8 @@
 // OPFS は Cross-Origin-Isolation が必要（vite.config.ts で設定済み）
 
 type SqliteDB = {
-  exec: (sql: string, opts?: Record<string, unknown>) => unknown
+  exec: (sqlOrOpts: string | { sql: string; bind?: unknown[] }) => unknown
   selectObjects: (sql: string, bind?: unknown[]) => Record<string, unknown>[]
-  run: (sql: string, bind?: unknown[]) => void
   close: () => void
 }
 
@@ -39,6 +38,17 @@ export async function initDB(): Promise<void> {
 function getDB(): SqliteDB {
   if (!_db) throw new Error('initDB() を先に呼んでください')
   return _db
+}
+
+// sqlite3 の oo1.DB に run() は無い。書き込みは exec({sql, bind}) を使う。
+// （run() を呼んでいたため INSERT/UPDATE/DELETE が全て TypeError で落ちていた）
+function run(sql: string, bind: unknown[] = []): void {
+  getDB().exec({ sql, bind })
+}
+
+function lastInsertId(): number {
+  const rows = getDB().selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
+  return rows[0].id
 }
 
 // ============================================================
@@ -248,24 +258,22 @@ export const db = {
   },
 
   insertPlayer(p: Player): number {
-    const db = getDB()
-    db.run(
+    run(
       `INSERT INTO players (name, rank, gender, age, height_cm) VALUES (?,?,?,?,?)`,
       [p.name, p.rank, p.gender ?? null, p.age ?? null, p.height_cm ?? null]
     )
-    const rows = db.selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
-    return rows[0].id
+    return lastInsertId()
   },
 
   updatePlayer(p: Player): void {
-    getDB().run(
+    run(
       `UPDATE players SET name=?, rank=?, gender=?, age=?, height_cm=? WHERE id=?`,
       [p.name, p.rank, p.gender ?? null, p.age ?? null, p.height_cm ?? null, p.id]
     )
   },
 
   deletePlayer(id: number): void {
-    getDB().run('DELETE FROM players WHERE id=?', [id])
+    run('DELETE FROM players WHERE id=?', [id])
   },
 
   // --- Settings ---
@@ -285,9 +293,8 @@ export const db = {
   },
 
   upsertSettings(s: Settings): number {
-    const db = getDB()
     if (s.id) {
-      db.run(
+      run(
         `UPDATE settings SET name=?,player_id=?,gap_lower_upper=?,gap_upper_lower=?,
          hl_base_offset=?,hl_per_char=?,hl_color=?,hl_border_color=?,hl_fill_opacity=?,
          hl_border_width=?,hl_offset_x=?,hl_offset_y=?,row_gap_mm=?,field_gap_mm=?,
@@ -299,7 +306,7 @@ export const db = {
       )
       return s.id
     } else {
-      db.run(
+      run(
         `INSERT INTO settings (name,player_id,gap_lower_upper,gap_upper_lower,
          hl_base_offset,hl_per_char,hl_color,hl_border_color,hl_fill_opacity,
          hl_border_width,hl_offset_x,hl_offset_y,row_gap_mm,field_gap_mm,calibration)
@@ -309,13 +316,12 @@ export const db = {
          s.hl_fill_opacity, s.hl_border_width, s.hl_offset_x, s.hl_offset_y,
          s.row_gap_mm, s.field_gap_mm, s.calibration]
       )
-      const rows = db.selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
-      return rows[0].id
+      return lastInsertId()
     }
   },
 
   deleteSettings(id: number): void {
-    getDB().run('DELETE FROM settings WHERE id=?', [id])
+    run('DELETE FROM settings WHERE id=?', [id])
   },
 
   // --- Sessions ---
@@ -330,29 +336,25 @@ export const db = {
   },
 
   insertSession(s: Session): number {
-    const db = getDB()
-    db.run(
+    run(
       `INSERT INTO sessions (player_id, session_type, settings_id, settings_snapshot, has_highlight)
        VALUES (?,?,?,?,?)`,
       [s.player_id ?? null, s.session_type, s.settings_id ?? null, s.settings_snapshot, s.has_highlight]
     )
-    const rows = db.selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
-    return rows[0].id
+    return lastInsertId()
   },
 
   endSession(id: number): void {
-    getDB().run(`UPDATE sessions SET ended_at=datetime('now') WHERE id=?`, [id])
+    run(`UPDATE sessions SET ended_at=datetime('now') WHERE id=?`, [id])
   },
 
   // --- Arrangements ---
   insertArrangement(sessionId: number, selfSide: ArrangementCard[], enemySide: ArrangementCard[]): number {
-    const db = getDB()
-    db.run(
+    run(
       `INSERT INTO arrangements (session_id, self_side, enemy_side) VALUES (?,?,?)`,
       [sessionId, JSON.stringify(selfSide), JSON.stringify(enemySide)]
     )
-    const rows = db.selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
-    return rows[0].id
+    return lastInsertId()
   },
 
   getLatestArrangement(sessionId: number): { self_side: ArrangementCard[], enemy_side: ArrangementCard[] } | undefined {
@@ -369,16 +371,14 @@ export const db = {
 
   // --- Reading Log ---
   insertReadingLog(entry: ReadingLogEntry): number {
-    const db = getDB()
-    db.run(
+    run(
       `INSERT INTO reading_log (session_id, position, poem_id, upper_start_ms, lower_start_ms, lower_end_ms, effective_kimari)
        VALUES (?,?,?,?,?,?,?)`,
       [entry.session_id, entry.position, entry.poem_id,
        entry.upper_start_ms ?? null, entry.lower_start_ms ?? null,
        entry.lower_end_ms ?? null, entry.effective_kimari]
     )
-    const rows = db.selectObjects('SELECT last_insert_rowid() AS id') as { id: number }[]
-    return rows[0].id
+    return lastInsertId()
   },
 
   updateReadingLogTimes(id: number, updates: Partial<Pick<ReadingLogEntry, 'upper_start_ms' | 'lower_start_ms' | 'lower_end_ms'>>): void {
@@ -389,7 +389,7 @@ export const db = {
     if (updates.lower_end_ms !== undefined) { parts.push('lower_end_ms=?'); vals.push(updates.lower_end_ms) }
     if (parts.length === 0) return
     vals.push(id)
-    getDB().run(`UPDATE reading_log SET ${parts.join(',')} WHERE id=?`, vals)
+    run(`UPDATE reading_log SET ${parts.join(',')} WHERE id=?`, vals)
   },
 
   getReadingLog(sessionId: number): ReadingLogEntry[] {
@@ -401,9 +401,8 @@ export const db = {
 
   // --- Posture Frames ---
   insertPostureFrames(frames: PostureFrame[]): void {
-    const db = getDB()
     for (const f of frames) {
-      db.run(
+      run(
         `INSERT INTO posture_frames (session_id, log_id, frame_ms, keypoints, phase)
          VALUES (?,?,?,?,?)`,
         [f.session_id, f.log_id, f.frame_ms, f.keypoints, f.phase]

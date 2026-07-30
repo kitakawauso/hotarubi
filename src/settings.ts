@@ -196,17 +196,22 @@ export function initSettings(containerSelector: string): void {
     }
   }
 
+  // 編集中のフォームの土台になる設定。スライダーに出ていない項目
+  // （player_id / calibration など）を引き継ぐために保持する。
+  let _formBase: Settings = { name: 'デフォルト', ...DEFAULT_SETTINGS }
+
+  // 変更は保存を待たずに読み上げと投影へ即座に反映する。
+  // openDetail の中で登録すると開くたびにリスナーが増えるので、ここで一度だけ登録する。
+  formBody.addEventListener('change', () => {
+    setActiveSettings(readFormValues(_formBase))
+  })
+
   function openDetail(s: Settings): void {
     _editId = s.id
+    _formBase = s
     nameInput.value = s.name
     buildSettingsForm(formBody, s)
     detail.style.display = ''
-
-    // 変更時にリアルタイム適用（まだ保存はしない）
-    formBody.addEventListener('change', () => {
-      const updated = readFormValues(s)
-      setActiveSettings(updated)
-    })
   }
 
   function readFormValues(base: Settings): Settings {
@@ -234,21 +239,20 @@ export function initSettings(containerSelector: string): void {
     _editId = undefined
   }
 
+  // 新規作成も openDetail を通す（未保存でもスライダーが即反映されるように）
   container.querySelector('#settings-new')!.addEventListener('click', () => {
-    const s: Settings = { name: '新しいプロファイル', ...DEFAULT_SETTINGS }
-    buildSettingsForm(formBody, s)
-    nameInput.value = s.name
-    _editId = undefined
-    detail.style.display = ''
+    openDetail({ name: '新しいプロファイル', ...DEFAULT_SETTINGS })
   })
 
   container.querySelector('#settings-save')!.addEventListener('click', () => {
-    const base = _editId ? (db.getSettings(_editId) ?? { ...DEFAULT_SETTINGS, name: '' }) : { ...DEFAULT_SETTINGS, name: '' }
-    const updated = readFormValues(base as Settings)
+    const base = _editId ? (db.getSettings(_editId) ?? _formBase) : _formBase
+    const updated = readFormValues(base)
     updated.id = _editId
-    const newId = db.upsertSettings(updated)
-    updated.id = newId
-    _editId = newId
+    updated.id = db.upsertSettings(updated)
+    _editId = updated.id
+    _formBase = updated
+    // 保存したものをそのまま使用中にする
+    setActiveSettings(updated)
     renderList()
   })
 

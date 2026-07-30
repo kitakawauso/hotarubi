@@ -37,13 +37,14 @@ type SliderDef = {
 }
 
 const TIMING_SLIDERS: SliderDef[] = [
-  { key: 'silenceSec',      label: '無音',       min: 0,  max: 5,  step: 0.1,  unit: '秒',
-    hint: '下の句のあと、上の句が始まるまで' },
-  { key: 'leadSec',         label: '先行',       min: -2, max: 3,  step: 0.05, unit: '秒',
-    hint: '無音の開始からの追加待ち。マイナスで上の句より前に点く' },
+  { key: 'silenceSec',      label: '無音の長さ', min: 0,  max: 5,  step: 0.1,  unit: '秒',
+    hint: '音の間隔。下の句が終わってから次の札の上の句が始まるまで。読み上げそのものの速さが変わる' },
+  { key: 'jokaSilenceSec',  label: '序歌の無音', min: 0,  max: 6,  step: 0.5,  unit: '秒',
+    hint: '序歌の上の句と下の句の間だけに使う無音。最初の1回だけ効く' },
+  { key: 'leadSec',         label: '点灯オフセット', min: -2, max: 3, step: 0.05, unit: '秒',
+    hint: '上の句が始まる瞬間を0秒とした点灯時刻。マイナスで前倒しだが、無音の長さより前には遡れない' },
   { key: 'perCharSec',      label: '字数係数',   min: 0,  max: 1,  step: 0.05, unit: '秒/字',
-    hint: '決まり字1文字あたりの遅延（段階表示のみ）' },
-  { key: 'jokaSilenceSec',  label: '序歌の無音', min: 0,  max: 6,  step: 0.5,  unit: '秒' },
+    hint: '決まり字1文字あたりの遅延。段階的に絞り込むモードでのみ効く' },
 ]
 
 const APPEARANCE_SLIDERS: SliderDef[] = [
@@ -107,8 +108,18 @@ export function initHighlightPanel(containerSelector: string): void {
         <option value="fixed">初期決まり字（固定）</option>
       </select>
     </div>
+    <div class="hl-row">
+      <label style="min-width:auto;" title="空札が読まれても、決まり字が途中まで一致する場の札を光らせます">
+        <input type="checkbox" id="hl-karafuda"> 空札でも光らせる
+      </label>
+    </div>
+    <p id="hl-karafuda-note" style="font-size:11px;color:var(--text3);margin:-2px 0 0;line-height:1.6;"></p>
 
     <p class="hl-group">タイミング</p>
+    <p style="font-size:11px;color:var(--text3);margin:-4px 0 8px;line-height:1.6;">
+      下の句 →〈無音の長さ〉→ 上の句、と進みます。ハイライトは
+      上の句開始から〈点灯オフセット〉秒後に点きます。
+    </p>
     <div id="hl-timing">${TIMING_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
 
     <p class="hl-group">見た目</p>
@@ -150,10 +161,34 @@ export function initHighlightPanel(containerSelector: string): void {
   // --- セレクト ---
   const modeSel = q<HTMLSelectElement>('#hl-mode')
   const srcSel = q<HTMLSelectElement>('#hl-source')
+  const kara = q<HTMLInputElement>('#hl-karafuda')
+  const karaNote = q<HTMLElement>('#hl-karafuda-note')
+
   modeSel.value = cfg.mode
   srcSel.value = cfg.source
-  modeSel.addEventListener('change', () => _update({ mode: modeSel.value as HighlightConfig['mode'] }))
+  kara.checked = cfg.highlightKarafuda
+
+  // 空札の設定は段階表示のときだけ意味を持つ
+  const syncKarafuda = () => {
+    const staged = modeSel.value === 'kimariji_stages'
+    kara.disabled = !staged
+    karaNote.textContent = !staged
+      ? '※「決まり字で段階的に絞り込む」を選ぶと有効になります。'
+      : kara.checked
+        ? '空札が読まれても、決まり字が一致する間は場の札が光ります。決まり字が分かれた時点で消えます。'
+        : '空札が読まれたときは何も光りません。'
+  }
+
+  modeSel.addEventListener('change', () => {
+    _update({ mode: modeSel.value as HighlightConfig['mode'] })
+    syncKarafuda()
+  })
   srcSel.addEventListener('change', () => _update({ source: srcSel.value as HighlightConfig['source'] }))
+  kara.addEventListener('change', () => {
+    _update({ highlightKarafuda: kara.checked })
+    syncKarafuda()
+  })
+  syncKarafuda()
 
   // --- 色 ---
   const colors: Array<[string, keyof HighlightConfig]> = [

@@ -132,16 +132,24 @@ function _effectiveKimariRecord(): Record<number, string> {
 
 // ============================================================
 // ハイライトの予約（無音の開始時に張る）
+//
 //   点灯時刻 = 無音開始 + silenceSec + leadSec + (k-1) × perCharSec
-// leadSec がマイナスなら上の句が始まる前に点く。
+//
+// 上の句が始まるのは「無音開始 + silenceSec」なので、leadSec は
+// 上の句開始を 0 とした点灯オフセットになる。マイナスで前倒しできるが、
+// 無音より前には遡れない（Math.max(0, ...) で頭打ち）。
 // ============================================================
 function _scheduleHighlights(targetId: number): void {
   const cfg = getHighlight()
   const poems = getPoems()
   const field = getFieldPoemIds()
+  const onField = field.includes(targetId)
 
-  // 場に無い札（空札）は光らせようがない
-  if (!field.includes(targetId)) return
+  // 空札（場に無い札）。「空札でも光らせる」が有効で、かつ段階表示のときだけ、
+  // 決まり字が途中まで一致する場の札を光らせる。
+  if (!onField && !(cfg.highlightKarafuda && cfg.mode === 'kimariji_stages')) return
+  // 読まれた札自体が場に無いなら「その1枚だけ」を光らせようがない
+  if (!onField && cfg.mode === 'target_only') return
 
   const kimari = _kimariFor(targetId)
   const maxK = cfg.mode === 'target_only' ? 1 : Math.max(1, kimari.length)
@@ -152,18 +160,25 @@ function _scheduleHighlights(targetId: number): void {
       // 点灯時刻は予約時の値で決まるが、色とモードは発火時の設定を読む
       // （競技タブで読み上げ中に変えてもその場で効くように）
       if (getHighlight().mode === 'target_only') {
-        broadcastHighlight([targetId], [])
+        if (onField) broadcastHighlight([targetId], [])
         return
       }
+
       // 決まり字プレフィックスに一致する場の札を集める。
       // 2枚以上あるうちは候補色でまとめて光らせ、1枚に絞れたときだけ確定色にする
       // （早い段階で正解が分かってしまわないようにするため）。
+      //
+      // 空札のときも同じ規則で光らせる。ここで色分けを変えてしまうと
+      // 「空札である」ことが見た目から分かってしまい、反応を測る意味がなくなる。
+      // 決まり字が場のどの札とも違う長さまで進むと一致0枚になり、そこで消える。
       const prefix = kimari.slice(0, k)
       const matches = field.filter(id => {
         const t = poems.find(p => p.id === id)?.hiragana ?? ''
         return t.startsWith(prefix)
       })
-      if (matches.length <= 1) broadcastHighlight(matches.length ? matches : [targetId], [])
+
+      if (matches.length === 0) clearHighlight()
+      else if (matches.length === 1) broadcastHighlight(matches, [])
       else broadcastHighlight([], matches)
     }, delayMs)
   }

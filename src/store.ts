@@ -49,6 +49,11 @@ export interface HighlightConfig {
   mode: 'target_only' | 'kimariji_stages'
   /** 決まり字を場の残り札から動的に再計算するか、CSV の初期決まり字を使うか */
   source: 'dynamic' | 'fixed'
+  /**
+   * 空札（場に無い札）が読まれたときも、決まり字が途中まで一致する
+   * 場の札を光らせるか。決まり字で段階的に絞り込むモードでのみ効く。
+   */
+  highlightKarafuda: boolean
   /** 無音開始から何秒後に1段目を出すか。マイナスで上の句より前に出る。 */
   leadSec: number
   /** 決まり字1文字あたりの追加遅延（秒/字）。mode=kimariji_stages のときだけ効く。 */
@@ -91,6 +96,7 @@ export function defaultCalibration(): Calibration {
 export const DEFAULT_HIGHLIGHT: HighlightConfig = {
   mode: 'target_only',
   source: 'dynamic',
+  highlightKarafuda: false,
   leadSec: 0.5,
   perCharSec: 0.15,
   silenceSec: 1.0,

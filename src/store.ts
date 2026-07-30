@@ -10,6 +10,7 @@
 const KEY_CALIBRATION = 'hotarubi_calibration'
 const KEY_ARRANGEMENTS = 'hotarubi_arrangements'
 const KEY_HIGHLIGHT = 'hotarubi_highlight'
+const KEY_READSET = 'hotarubi_readset'
 
 // ============================================================
 // 型
@@ -58,10 +59,8 @@ export interface HighlightConfig {
   leadSec: number
   /** 決まり字1文字あたりの追加遅延（秒/字）。mode=kimariji_stages のときだけ効く。 */
   perCharSec: number
-  /** 下の句のあとの無音（秒）。この時間が経つと上の句が始まる。 */
+  /** 下の句のあとの間（秒）。この時間が経つと上の句が始まる。 */
   silenceSec: number
-  /** 序歌の上の句と下の句の間の無音（秒） */
-  jokaSilenceSec: number
   /** 読まれた札の塗りつぶし色 */
   targetColor: string
   /** 決まり字が一致する他の札の色（mode=kimariji_stages のみ） */
@@ -100,7 +99,6 @@ export const DEFAULT_HIGHLIGHT: HighlightConfig = {
   leadSec: 0.5,
   perCharSec: 0.15,
   silenceSec: 1.0,
-  jokaSilenceSec: 2.0,
   targetColor: '#00ff00',
   candidateColor: '#00aa55',
   fillOpacity: 0.85,
@@ -197,4 +195,24 @@ export function setHighlight(patch: Partial<HighlightConfig>): HighlightConfig {
   _highlight = { ..._highlight, ...patch }
   save(KEY_HIGHLIGHT, _highlight)
   return _highlight
+}
+
+// ============================================================
+// 読む札セット
+// ============================================================
+export interface ReadSet {
+  /** all=全100首 / field=配置された札のみ / custom=手選び */
+  mode: 'all' | 'field' | 'custom'
+  /** mode=custom のときに読む poem_id */
+  customIds: number[]
+}
+
+export function loadReadSet(): ReadSet {
+  const raw = load<Partial<ReadSet>>(KEY_READSET)
+  const mode = raw?.mode === 'field' || raw?.mode === 'custom' ? raw.mode : 'all'
+  return { mode, customIds: Array.isArray(raw?.customIds) ? raw!.customIds! : [] }
+}
+
+export function saveReadSet(r: ReadSet): void {
+  save(KEY_READSET, r)
 }

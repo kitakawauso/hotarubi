@@ -231,6 +231,21 @@
         color: var(--text2); border-radius: 4px;
       }
       .modal-card-btn:hover { border-color: var(--accent); color: var(--accent2); }
+      .modal-card-btn.selected {
+        background: linear-gradient(135deg, #8b4a00, #b86000);
+        border-color: var(--accent); color: #f5e8c0;
+      }
+
+      #modal-footer {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-top: 1px solid var(--border);
+      }
+      #modal-footer.visible { display: flex; }
+      #modal-count { font-size: 12px; color: var(--accent2); white-space: nowrap; }
+      #modal-footer button { font-size: 11px; padding: 4px 10px; }
 
       /* ======= トースト ======= */
       #toast {
@@ -327,6 +342,14 @@
         <div id="modal-body">
           <input type="text" id="modal-search-input" placeholder="決まり字で検索..." />
           <div id="modal-grid"></div>
+        </div>
+        <!-- 複数選択モードのときだけ表示 -->
+        <div id="modal-footer">
+          <span id="modal-count"></span>
+          <span style="flex:1;"></span>
+          <button id="modal-select-all">表示中を全選択</button>
+          <button id="modal-clear-all">全解除</button>
+          <button id="modal-done" class="primary">決定</button>
         </div>
       </div>
     </div>

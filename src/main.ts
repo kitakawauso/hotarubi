@@ -130,6 +130,80 @@ export function openCardModal(
 
 export function closeModal(): void {
   document.getElementById('modal-overlay')!.classList.remove('visible')
+  document.getElementById('modal-footer')!.classList.remove('visible')
+}
+
+// ============================================================
+// 札の複数選択モーダル（読む札セットのカスタム用）
+// 同じモーダル DOM を使い回し、フッターを出して選択・非選択を切り替える。
+// ============================================================
+export function openCardMultiSelect(
+  title: string,
+  options: ModalCardOption[],
+  initiallySelected: number[],
+  onDone: (ids: number[]) => void
+): void {
+  const overlay     = document.getElementById('modal-overlay')!
+  const modalTitle  = document.getElementById('modal-title')!
+  const grid        = document.getElementById('modal-grid')!
+  const footer      = document.getElementById('modal-footer')!
+  const countEl     = document.getElementById('modal-count')!
+  const searchInput = document.getElementById('modal-search-input') as HTMLInputElement
+
+  const selected = new Set(initiallySelected)
+  let visible: ModalCardOption[] = options
+
+  modalTitle.textContent = title
+  searchInput.value = ''
+
+  const syncCount = () => { countEl.textContent = `${selected.size} 枚 選択中` }
+
+  const render = (filter: string) => {
+    visible = filter
+      ? options.filter(o => o.kimari.startsWith(filter) || o.label?.includes(filter) || String(o.poem_id) === filter)
+      : options
+
+    grid.innerHTML = ''
+    for (const opt of visible) {
+      const btn = document.createElement('button')
+      btn.className = 'modal-card-btn' + (selected.has(opt.poem_id) ? ' selected' : '')
+      btn.textContent = `${opt.poem_id}. ${opt.kimari}`
+      btn.title = `${opt.poem_id}番: ${opt.kimari}`
+      btn.onclick = () => {
+        if (selected.has(opt.poem_id)) selected.delete(opt.poem_id)
+        else selected.add(opt.poem_id)
+        btn.classList.toggle('selected', selected.has(opt.poem_id))
+        syncCount()
+      }
+      grid.appendChild(btn)
+    }
+    if (visible.length === 0) {
+      grid.innerHTML = '<span style="color:var(--text3);font-size:12px;">該当なし</span>'
+    }
+  }
+
+  render('')
+  syncCount()
+  searchInput.oninput = () => render(searchInput.value.trim())
+
+  document.getElementById('modal-select-all')!.onclick = () => {
+    for (const o of visible) selected.add(o.poem_id)
+    render(searchInput.value.trim())
+    syncCount()
+  }
+  document.getElementById('modal-clear-all')!.onclick = () => {
+    selected.clear()
+    render(searchInput.value.trim())
+    syncCount()
+  }
+  document.getElementById('modal-done')!.onclick = () => {
+    closeModal()
+    onDone([...selected].sort((a, b) => a - b))
+  }
+
+  footer.classList.add('visible')
+  overlay.classList.add('visible')
+  searchInput.focus()
 }
 
 // ============================================================

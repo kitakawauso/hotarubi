@@ -14,8 +14,12 @@
 
 import { audioPath, getPoems, JOUKA_ID, computeEffectiveKimari } from './data'
 import { getArrangement, getFieldPoemIds, removeCard } from './card-grid'
-import { getHighlight } from './store'
+import { getHighlight, loadReadSet, saveReadSet, type ReadSet } from './store'
 import { broadcastHighlight, clearHighlight } from './projection-render'
+import { openCardMultiSelect } from './main'
+
+/** 序歌の上の句と下の句の間。調整する必要がないので固定。 */
+const JOKA_SILENCE_SEC = 2
 
 // ============================================================
 // 型
@@ -196,7 +200,7 @@ function _enterJoka(): void {
     _current = null
     _pickNext()
     _updateUI()
-    _setTimer(_enterJokaShimo, getHighlight().jokaSilenceSec * 1000)
+    _setTimer(_enterJokaShimo, JOKA_SILENCE_SEC * 1000)
   })
 }
 
@@ -382,7 +386,13 @@ export function initReading(containerSelector: string): void {
         <select id="r-range">
           <option value="all">全100首（空札を含む）</option>
           <option value="field">配置された札のみ</option>
+          <option value="custom">カスタム</option>
         </select>
+      </div>
+
+      <div id="r-custom" style="display:none;align-items:center;gap:10px;margin:-6px 0 0;">
+        <span id="r-custom-count" style="font-size:12px;color:var(--accent2);"></span>
+        <button id="r-custom-open" style="font-size:12px;">札を選択</button>
       </div>
 
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -408,14 +418,45 @@ export function initReading(containerSelector: string): void {
     rangeSel: container.querySelector<HTMLSelectElement>('#r-range')!,
   }
 
+  // --- 読む札セット ---
+  const customRow   = container.querySelector<HTMLElement>('#r-custom')!
+  const customCount = container.querySelector<HTMLElement>('#r-custom-count')!
+  let readSet: ReadSet = loadReadSet()
+
+  const syncReadSet = () => {
+    _ui!.rangeSel.value = readSet.mode
+    customRow.style.display = readSet.mode === 'custom' ? 'flex' : 'none'
+    customCount.textContent = `${readSet.customIds.length} 枚 選択中`
+    saveReadSet(readSet)
+  }
+
+  _ui.rangeSel.addEventListener('change', () => {
+    readSet = { ...readSet, mode: _ui!.rangeSel.value as ReadSet['mode'] }
+    syncReadSet()
+  })
+
+  container.querySelector('#r-custom-open')!.addEventListener('click', () => {
+    const options = getPoems().map(p => ({ poem_id: p.id, kimari: p.kimari_ji }))
+    openCardMultiSelect('読む札を選択', options, readSet.customIds, ids => {
+      readSet = { ...readSet, customIds: ids }
+      syncReadSet()
+    })
+  })
+
+  syncReadSet()
+
   _ui.btnPlay.addEventListener('click', () => {
     if (_playing) { stopReading(); return }
     if (_started) { resumeReading(); return }
 
-    if (_ui!.rangeSel.value === 'field') {
+    if (readSet.mode === 'field') {
       const arr = getArrangement()
       const ids = [...new Set([...arr.self, ...arr.enemy].map(c => c.poem_id))]
-      startReading(ids.length > 0 ? ids : undefined)
+      if (ids.length === 0) { alert('札が配置されていません'); return }
+      startReading(ids)
+    } else if (readSet.mode === 'custom') {
+      if (readSet.customIds.length === 0) { alert('「札を選択」から読む札を選んでください'); return }
+      startReading([...readSet.customIds])
     } else {
       startReading()
     }

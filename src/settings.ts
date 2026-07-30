@@ -37,12 +37,10 @@ type SliderDef = {
 }
 
 const TIMING_SLIDERS: SliderDef[] = [
-  { key: 'silenceSec',      label: '無音の長さ', min: 0,  max: 5,  step: 0.1,  unit: '秒',
-    hint: '音の間隔。下の句が終わってから次の札の上の句が始まるまで。読み上げそのものの速さが変わる' },
-  { key: 'jokaSilenceSec',  label: '序歌の無音', min: 0,  max: 6,  step: 0.5,  unit: '秒',
-    hint: '序歌の上の句と下の句の間だけに使う無音。最初の1回だけ効く' },
+  { key: 'silenceSec',      label: '間の長さ', min: 0,  max: 5,  step: 0.1,  unit: '秒',
+    hint: '下の句が終わってから次の札の上の句が始まるまで。読み上げそのものの速さが変わる' },
   { key: 'leadSec',         label: '点灯オフセット', min: -2, max: 3, step: 0.05, unit: '秒',
-    hint: '上の句が始まる瞬間を0秒とした点灯時刻。マイナスで前倒しだが、無音の長さより前には遡れない' },
+    hint: '上の句が始まる瞬間を0秒とした点灯時刻。マイナスで前倒しだが、間の長さより前には遡れない' },
   { key: 'perCharSec',      label: '字数係数',   min: 0,  max: 1,  step: 0.05, unit: '秒/字',
     hint: '決まり字1文字あたりの遅延。段階的に絞り込むモードでのみ効く' },
 ]
@@ -117,7 +115,7 @@ export function initHighlightPanel(containerSelector: string): void {
 
     <p class="hl-group">タイミング</p>
     <p style="font-size:11px;color:var(--text3);margin:-4px 0 8px;line-height:1.6;">
-      下の句 →〈無音の長さ〉→ 上の句、と進みます。ハイライトは
+      下の句 →〈間の長さ〉→ 上の句、と進みます。ハイライトは
       上の句開始から〈点灯オフセット〉秒後に点きます。
     </p>
     <div id="hl-timing">${TIMING_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>

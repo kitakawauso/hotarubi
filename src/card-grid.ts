@@ -108,30 +108,32 @@ export function removeCard(poemId: number): void {
 }
 
 /**
- * 端寄せ（送り）。出札があった段だけを詰める。
+ * 端寄せ（送り）。出札があった段の、出札があった側だけを詰める。
  *
- * 中心（列8）を境に、出札が左側なら段の札を1つずつ左へ、
- * 右側なら1つずつ右へ寄せる。動くのは空いた位置の外側にある札だけで、
- * それぞれちょうど1マスずつ移動する。
+ * 中心（列8）を境に、出札が左半分なら **左半分の札だけ** を1つずつ左へ、
+ * 右半分なら **右半分の札だけ** を1つずつ右へ寄せる。
+ * 反対側の半分は動かさない。
  *
- *   例) 左側の列3が出札        [A B C _ D E . . .]
- *       → 右にある札が1つ左へ  [A B C D E _ . . .]
+ *   例) 左半分の列1が出札
+ *       [A _ B C _ _ _ _ | _ _ F G _ _ _ _]
+ *     → [A B C _ _ _ _ _ | _ _ F G _ _ _ _]   右半分はそのまま
  *
- *   例) 右側の列12が出札        [. . . H I _ J K]
- *       → 左にある札が1つ右へ  [. . . _ H I J K]
+ *   例) 右半分の列11が出札
+ *       [A B _ _ _ _ _ _ | _ F _ G H _ _ _]
+ *     → [A B _ _ _ _ _ _ | _ _ F G H _ _ _]   左半分はそのまま
  */
 function _compactRow(field: number, row: number, removedCol: number): void {
   const r = _grid[field][row]
-  const toLeft = removedCol < COLS / 2
+  const HALF = COLS / 2
 
-  if (toLeft) {
-    // 空いた位置より右の札を1つずつ左へ
-    for (let c = removedCol; c < COLS - 1; c++) r[c] = r[c + 1]
-    r[COLS - 1] = null
+  if (removedCol < HALF) {
+    // 左半分の中だけで、空いた位置より右の札を1つずつ左へ
+    for (let c = removedCol; c < HALF - 1; c++) r[c] = r[c + 1]
+    r[HALF - 1] = null
   } else {
-    // 空いた位置より左の札を1つずつ右へ
-    for (let c = removedCol; c > 0; c--) r[c] = r[c - 1]
-    r[0] = null
+    // 右半分の中だけで、空いた位置より左の札を1つずつ右へ
+    for (let c = removedCol; c > HALF; c--) r[c] = r[c - 1]
+    r[HALF] = null
   }
 }
 

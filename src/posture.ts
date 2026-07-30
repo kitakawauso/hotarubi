@@ -2,9 +2,10 @@
 // posture.ts — MediaPipe Pose・骨格キャプチャ・可視化
 // ============================================================
 
-import { onReadingEvent, getReadingConfig } from './audio'
+import { onReadingEvent } from './audio'
 import { db, type PostureFrame } from './db'
 import { getCurrentSessionId } from './session'
+import { getHighlight } from './store'
 
 // ============================================================
 // 型定義
@@ -182,15 +183,15 @@ function _setupReadingHooks(): void {
         _sessionStartMs = e.absMs
         break
 
-      case 'lower_end': {
-        // 下の句終了 → pre_upper キャプチャ開始
-        if (_currentLogId !== null) {
-          _startCapture(_currentLogId, 'pre_upper')
-        }
+      case 'silence_start': {
+        // 下の句が終わって無音に入った = 取り札の直前。予備動作の記録を開始する。
+        // この時点ではまだ次の札の reading_log が無いので、いったん直前の札の
+        // log_id でバッファし、kami_start で確定した log_id に付け替える。
+        _startCapture(_currentLogId ?? 0, 'pre_upper')
         break
       }
 
-      case 'upper_start': {
+      case 'kami_start': {
         if (_stopTimer) { clearTimeout(_stopTimer); _stopTimer = null }
         const sid = getCurrentSessionId()
         const log = sid !== null
@@ -198,23 +199,20 @@ function _setupReadingHooks(): void {
           : undefined
 
         if (log?.id !== undefined) {
-          // 直前の lower_end 〜 今この瞬間までにバッファ済みの pre_upper フレームは、
-          // 生成時点ではまだ「この札」の log_id が確定していなかったため
-          // 直前の札の log_id で暫定的にタグ付けされている。今ここで確定した
-          // log_id に付け替える（この札の上の句が読まれる直前の予備動作として記録するため）。
           for (const f of _frameBuffer) {
             if (f.phase === 'pre_upper') f.log_id = log.id
           }
-
           _currentLogId = log.id
           _capturePhase = 'post_upper'
           _savingFrames = true
-          // 上の句開始から、設定された上→下の句間隔ぶん停止（間隔を変更してもキャプチャ窓が追従する）
-          const captureMs = Math.max(getReadingConfig().gap_upper_lower * 1000, 1000)
-          _stopTimer = setTimeout(_stopCapture, captureMs)
         }
         break
       }
+
+      case 'kami_end':
+        // 上の句を読み終えたところまでを1枚分の記録とする
+        _stopCapture()
+        break
 
       case 'session_end':
         _stopCapture()
@@ -290,7 +288,8 @@ export function initPosture(containerSelector: string): void {
           style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;"></canvas>
       </div>
       <p style="font-size:11px;color:var(--text3);flex-shrink:0;margin:0;">
-        カメラを起動すると常時姿勢推定します。下の句終了〜上の句開始後5秒間の骨格を保存します。
+        カメラを起動すると常時姿勢推定します。無音（取り札の直前）から上の句の終わりまでの骨格を保存します。
+        計測しない場合は起動不要です。
       </p>
     </div>
   `

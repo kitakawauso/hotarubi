@@ -3,17 +3,17 @@
 // ============================================================
 
 import { getPoems, cardImagePath } from './data'
-import type { FieldCard } from './projection-render'
+import { broadcastAll } from './projection-render'
+import {
+  loadArrangements, saveArrangement, deleteArrangement,
+  type ArrangementCard, type SavedArrangement,
+} from './store'
+
+export type { ArrangementCard }
 
 // ============================================================
 // 型定義
 // ============================================================
-export interface ArrangementCard {
-  poem_id: number
-  row: number   // 0-2
-  col: number   // 0-15
-}
-
 type Slot = number | null  // poem_id または空
 
 // grid[field][row][col]: field 0=自陣, 1=敵陣
@@ -51,23 +51,12 @@ let _openModal: ModalOpener = () => {}
 export function setModalOpener(fn: ModalOpener): void { _openModal = fn }
 
 // ============================================================
-// 投影ウィンドウへの BroadcastChannel 送信
-// ============================================================
-const _projChannel = new BroadcastChannel('hotarubi-projection')
-
+// 投影ウィンドウへの送信
 // 投影ウィンドウは開いた時点の状態を持っていないため、配置変更時だけでなく
-// 投影側から hello を受け取ったときにも呼び出して現在の配置を送り直す。
+// 投影側から hello を受け取ったときにも呼び出して送り直す。
+// ============================================================
 export function broadcastArrangement(): void {
-  const { self, enemy } = getArrangement()
-  _projChannel.postMessage({
-    type: 'state',
-    payload: {
-      cards: {
-        self:  self.map(c  => ({ poem_id: c.poem_id, row: c.row, col: c.col } as FieldCard)),
-        enemy: enemy.map(c => ({ poem_id: c.poem_id, row: c.row, col: c.col } as FieldCard)),
-      },
-    },
-  })
+  broadcastAll(getArrangement())
 }
 
 // ============================================================
@@ -82,6 +71,12 @@ export function getArrangement(): { self: ArrangementCard[]; enemy: ArrangementC
     return cards
   }
   return { self: toCards(_grid[0]), enemy: toCards(_grid[1]) }
+}
+
+/** 場に出ている札の poem_id 一覧（決まり字計算とハイライト対象の判定に使う） */
+export function getFieldPoemIds(): number[] {
+  const { self, enemy } = getArrangement()
+  return [...new Set([...self, ...enemy].map(c => c.poem_id))]
 }
 
 export function setArrangement(self: ArrangementCard[], enemy: ArrangementCard[]): void {
@@ -367,6 +362,12 @@ function _buildToolbar(toolbar: HTMLElement): void {
       <input type="checkbox" id="arrange-compact"> 端寄せ自動
     </label>
     <button id="arrange-set-btn">札セット: 全100枚</button>
+    <span style="width:1px;height:22px;background:var(--border);margin:0 4px;"></span>
+    <input type="text" id="arrange-name" placeholder="配置名" style="width:120px;">
+    <button id="arrange-save" class="primary">保存</button>
+    <select id="arrange-saved" style="max-width:170px;"></select>
+    <button id="arrange-load">読込</button>
+    <button id="arrange-delete" style="color:#e06060;border-color:#e06060;">削除</button>
   `
 
   // 札セットパネル（トグル）
@@ -454,6 +455,43 @@ function _buildToolbar(toolbar: HTMLElement): void {
   ;(toolbar.querySelector('#arrange-compact') as HTMLInputElement).addEventListener('change', e => {
     _compactMode = (e.target as HTMLInputElement).checked
   })
+
+  // --- 名前をつけて保存 / 読込（localStorage） ---
+  const nameInput = toolbar.querySelector<HTMLInputElement>('#arrange-name')!
+  const savedSel  = toolbar.querySelector<HTMLSelectElement>('#arrange-saved')!
+
+  const refreshSaved = (selectId?: string) => {
+    const list = loadArrangements()
+    savedSel.innerHTML = list.length === 0
+      ? '<option value="">保存された配置なし</option>'
+      : list.map(a => `<option value="${a.id}">${a.name}（${a.self.length + a.enemy.length}枚）</option>`).join('')
+    if (selectId) savedSel.value = selectId
+  }
+
+  toolbar.querySelector('#arrange-save')!.addEventListener('click', () => {
+    const name = nameInput.value.trim()
+    if (!name) { alert('配置名を入力してください'); return }
+    const { self, enemy } = getArrangement()
+    if (self.length === 0 && enemy.length === 0) { alert('札が配置されていません'); return }
+    const saved = saveArrangement(name, self, enemy)
+    refreshSaved(saved.id)
+  })
+
+  toolbar.querySelector('#arrange-load')!.addEventListener('click', () => {
+    const target = loadArrangements().find((a: SavedArrangement) => a.id === savedSel.value)
+    if (!target) return
+    setArrangement(target.self, target.enemy)
+    nameInput.value = target.name
+  })
+
+  toolbar.querySelector('#arrange-delete')!.addEventListener('click', () => {
+    const target = loadArrangements().find((a: SavedArrangement) => a.id === savedSel.value)
+    if (!target || !confirm(`「${target.name}」を削除しますか？`)) return
+    deleteArrangement(target.id)
+    refreshSaved()
+  })
+
+  refreshSaved()
 }
 
 // ============================================================

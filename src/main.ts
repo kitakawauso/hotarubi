@@ -1,90 +1,53 @@
 // ============================================================
 // main.ts — メインアプリ エントリ・タブルーター・初期化
+//
+// タブは研究者が実際にたどる順番に並べてある:
+//   ① 投影調整 → ② 札配置 → ③ 競技
+// プレイヤー登録と姿勢推定は計測するときだけ使う任意の機能で、
+// 投影・読み上げの前提条件にはしない。
 // ============================================================
 
 import { initDB } from './db'
 import { loadPoems } from './data'
 import { initCardGrid, setModalOpener, broadcastArrangement } from './card-grid'
 import { initReading, setSessionType } from './audio'
-import { initCalibration, openProjectionWindow, broadcastCalibration } from './calibration'
+import { initCalibration, openProjectionWindow, broadcastCalibration, setCalibrationMode } from './calibration'
+import { initHighlightPanel, broadcastHighlightConfig } from './settings'
 import { initPosture } from './posture'
 import { initPlayers } from './player'
-import { initSettings, broadcastActiveSettings } from './settings'
 import { initSession } from './session'
 
 // ============================================================
 // タブルーター
 // ============================================================
-const TABS = ['players', 'competitive', 'memorize', 'calibration', 'settings'] as const
+const TABS = ['calibration', 'arrange', 'play', 'players'] as const
 type Tab = typeof TABS[number]
 
-let _currentTab: Tab = 'players'
+let _currentTab: Tab = 'calibration'
 const _initialized = new Set<string>()
-
-// 共有読み上げパネルを指定スロットに移動する
-function _moveReadingPanel(slotId: string): void {
-  const panel = document.getElementById('reading-shared-panel')!
-  const slot  = document.getElementById(slotId)!
-  if (panel.parentElement !== slot) {
-    panel.style.display = ''
-    slot.appendChild(panel)
-  }
-}
 
 function switchTab(tab: Tab): void {
   if (_currentTab === tab) return
+
+  // 投影は調整タブにいる間だけ枠線表示にする
+  if (_currentTab === 'calibration') setCalibrationMode(false)
+
   _currentTab = tab
 
   document.querySelectorAll('.tab-btn').forEach(el => {
     el.classList.toggle('active', (el as HTMLElement).dataset.tab === tab)
   })
   document.querySelectorAll('.view').forEach(el => {
-    const isActive = el.id === `view-${tab}`
-    el.classList.toggle('active', isActive)
+    el.classList.toggle('active', el.id === `view-${tab}`)
   })
 
   initTabOnce(tab)
+
+  if (tab === 'calibration') setCalibrationMode(true)
 }
 
 function initTabOnce(tab: Tab): void {
   switch (tab) {
-    case 'players':
-      if (!_initialized.has('players')) {
-        _initialized.add('players')
-        initPlayers('#players-ui')
-      }
-      break
-
-    case 'competitive':
-      // 読み上げパネルを競技スロットに移動
-      if (!_initialized.has('reading')) {
-        _initialized.add('reading')
-        initReading('#reading-shared-panel')
-      }
-      setSessionType('competitive')
-      _moveReadingPanel('comp-reading-slot')
-
-      if (!_initialized.has('posture')) {
-        _initialized.add('posture')
-        initPosture('#comp-posture-slot')
-      }
-      break
-
-    case 'memorize':
-      // 読み上げパネルを暗記スロットに移動
-      if (!_initialized.has('reading')) {
-        _initialized.add('reading')
-        initReading('#reading-shared-panel')
-      }
-      setSessionType('memorization')
-      _moveReadingPanel('memo-reading-slot')
-
-      if (!_initialized.has('arrange')) {
-        _initialized.add('arrange')
-        initCardGrid('#card-grid-container', '#arrange-toolbar')
-      }
-      break
-
     case 'calibration':
       if (!_initialized.has('calibration')) {
         _initialized.add('calibration')
@@ -92,10 +55,27 @@ function initTabOnce(tab: Tab): void {
       }
       break
 
-    case 'settings':
-      if (!_initialized.has('settings')) {
-        _initialized.add('settings')
-        initSettings('#settings-ui')
+    case 'arrange':
+      if (!_initialized.has('arrange')) {
+        _initialized.add('arrange')
+        initCardGrid('#card-grid-container', '#arrange-toolbar')
+      }
+      break
+
+    case 'play':
+      if (!_initialized.has('play')) {
+        _initialized.add('play')
+        setSessionType('competitive')
+        initReading('#play-reading-slot')
+        initHighlightPanel('#play-highlight-slot')
+        initPosture('#play-posture-slot')
+      }
+      break
+
+    case 'players':
+      if (!_initialized.has('players')) {
+        _initialized.add('players')
+        initPlayers('#players-ui')
       }
       break
   }
@@ -110,13 +90,10 @@ export interface ModalCardOption {
   label?: string
 }
 
-type ModalCallback = (poemId: number) => void
-let _modalCb: ModalCallback | null = null
-
 export function openCardModal(
   title: string,
   options: ModalCardOption[],
-  onSelect: ModalCallback
+  onSelect: (poemId: number) => void
 ): void {
   const overlay     = document.getElementById('modal-overlay')!
   const modalTitle  = document.getElementById('modal-title')!
@@ -124,7 +101,6 @@ export function openCardModal(
   const searchInput = document.getElementById('modal-search-input') as HTMLInputElement
 
   modalTitle.textContent = title
-  _modalCb = onSelect
   searchInput.value = ''
 
   const render = (filter: string) => {
@@ -154,7 +130,6 @@ export function openCardModal(
 
 export function closeModal(): void {
   document.getElementById('modal-overlay')!.classList.remove('visible')
-  _modalCb = null
 }
 
 // ============================================================
@@ -181,36 +156,32 @@ async function boot(): Promise<void> {
     initSession()
     setModalOpener(openCardModal)
 
-    // タブクリック
     document.querySelectorAll<HTMLElement>('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab as Tab))
     })
 
-    // モード選択ボタン（プレイヤー画面）
-    document.getElementById('btn-start-competitive')!.addEventListener('click', () => switchTab('competitive'))
-    document.getElementById('btn-start-memorize')!.addEventListener('click', () => switchTab('memorize'))
-
-    // 投影ウィンドウ: どのタブからでも開けるようにタブバーに常設
+    // 投影ウィンドウ: どのタブからでも開ける
     document.getElementById('btn-open-projection')!.addEventListener('click', openProjectionWindow)
 
-    // 投影ウィンドウが起動を知らせてきたら、現在の配置・調整・設定を送り直す。
-    // これが無いと、札を並べたあとに投影ウィンドウを開いても何も映らない。
+    // 投影ウィンドウは開かれた時点の状態を持っていないので、
+    // 起動通知（hello）を受けたら配置・調整・ハイライト設定を送り直す。
     const projChannel = new BroadcastChannel('hotarubi-projection')
     projChannel.addEventListener('message', e => {
       if ((e.data as { type?: string })?.type !== 'hello') return
       broadcastArrangement()
       broadcastCalibration()
-      broadcastActiveSettings()
+      broadcastHighlightConfig()
+      setCalibrationMode(_currentTab === 'calibration')
     })
 
-    // モーダルを閉じる
     document.getElementById('modal-close')!.onclick = closeModal
     document.getElementById('modal-overlay')!.addEventListener('click', e => {
       if (e.target === e.currentTarget) closeModal()
     })
 
-    // 初期タブ（プレイヤー）を初期化
-    initTabOnce('players')
+    // 初期タブ（投影調整）
+    initTabOnce('calibration')
+    setCalibrationMode(true)
 
     loading.classList.add('hidden')
   } catch (err) {

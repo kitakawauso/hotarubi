@@ -1,276 +1,189 @@
 // ============================================================
-// settings.ts — 設定パネルUI・設定プロファイルCRUD
+// settings.ts — ハイライト設定パネル（競技タブに常設）
+//
+// 読み上げ中でもその場で値を変えられる。変更は即座に
+//   ・localStorage へ保存
+//   ・投影ウィンドウへ配信
+// されるので、投影を見ながら追い込める。
 // ============================================================
 
-import { db, type Settings, DEFAULT_SETTINGS } from './db'
-import { setReadingConfig } from './audio'
+import { getHighlight, setHighlight, DEFAULT_HIGHLIGHT, type HighlightConfig } from './store'
+import { broadcastPartial } from './projection-render'
 
-// アクティブな設定（読み上げ等で参照）
-let _active: Settings = { name: 'デフォルト', ...DEFAULT_SETTINGS }
+// ============================================================
+// 変更の反映
+// ============================================================
+function _update(patch: Partial<HighlightConfig>): void {
+  const next = setHighlight(patch)
+  broadcastPartial({ highlight: next })
+}
 
-export function getActiveSettings(): Settings { return _active }
-
-// 投影ウィンドウ起動時の再送用。設定タブを一度も開いていなくても
-// DEFAULT_SETTINGS が入っているのでそのまま送れる。
-export function broadcastActiveSettings(): void { setActiveSettings(_active) }
-
-export function setActiveSettings(s: Settings): void {
-  _active = s
-  // audio.ts に反映
-  setReadingConfig({
-    gap_lower_upper: s.gap_lower_upper,
-    gap_upper_lower: s.gap_upper_lower,
-    hl_base_offset: s.hl_base_offset,
-    hl_per_char: s.hl_per_char,
-    hl_color: s.hl_color,
-    hl_border_color: s.hl_border_color,
-    hl_fill_opacity: s.hl_fill_opacity,
-    hl_border_width: s.hl_border_width,
-    hl_offset_x: s.hl_offset_x,
-    hl_offset_y: s.hl_offset_y,
-    row_gap_mm: s.row_gap_mm,
-    field_gap_mm: s.field_gap_mm,
-  })
-  // 投影ウィンドウに反映
-  new BroadcastChannel('hotarubi-projection').postMessage({
-    type: 'settings',
-    settings: {
-      row_gap_mm: s.row_gap_mm,
-      field_gap_mm: s.field_gap_mm,
-      hl_color: s.hl_color,
-      hl_border_color: s.hl_border_color,
-      hl_fill_opacity: s.hl_fill_opacity,
-      hl_border_width: s.hl_border_width,
-      hl_offset_x: s.hl_offset_x,
-      hl_offset_y: s.hl_offset_y,
-      hl_base_offset: s.hl_base_offset,
-      hl_per_char: s.hl_per_char,
-    },
-  })
+/** 投影ウィンドウ起動時の再送用 */
+export function broadcastHighlightConfig(): void {
+  broadcastPartial({ highlight: getHighlight() })
 }
 
 // ============================================================
-// スライダー + 数値入力 のペアを生成するヘルパー
+// 部品
 // ============================================================
-function makeSlider(
-  id: string,
-  label: string,
-  min: number,
-  max: number,
-  step: number,
-  value: number,
-  unit = ''
-): HTMLElement {
-  const row = document.createElement('div')
-  row.className = 'form-row'
-  row.innerHTML = `
-    <label style="min-width:140px;">${label}</label>
-    <input type="range" id="${id}-range" min="${min}" max="${max}" step="${step}" value="${value}" style="flex:1;">
-    <input type="number" id="${id}-num" min="${min}" max="${max}" step="${step}" value="${value}" style="width:70px;">
-    <span style="font-size:11px;color:var(--text3);">${unit}</span>
-  `
-  const range = row.querySelector<HTMLInputElement>(`#${id}-range`)!
-  const num   = row.querySelector<HTMLInputElement>(`#${id}-num`)!
-  range.addEventListener('input', () => { num.value = range.value; row.dispatchEvent(new Event('change', { bubbles: true })) })
-  num.addEventListener('input', () => { range.value = num.value; row.dispatchEvent(new Event('change', { bubbles: true })) })
-  return row
+type SliderDef = {
+  key: keyof HighlightConfig
+  label: string
+  min: number
+  max: number
+  step: number
+  unit: string
+  hint?: string
 }
 
-function getSliderValue(container: Element, id: string): number {
-  return parseFloat((container.querySelector(`#${id}-num`) as HTMLInputElement).value)
-}
+const TIMING_SLIDERS: SliderDef[] = [
+  { key: 'silenceSec',      label: '無音',       min: 0,  max: 5,  step: 0.1,  unit: '秒',
+    hint: '下の句のあと、上の句が始まるまで' },
+  { key: 'leadSec',         label: '先行',       min: -2, max: 3,  step: 0.05, unit: '秒',
+    hint: '無音の開始からの追加待ち。マイナスで上の句より前に点く' },
+  { key: 'perCharSec',      label: '字数係数',   min: 0,  max: 1,  step: 0.05, unit: '秒/字',
+    hint: '決まり字1文字あたりの遅延（段階表示のみ）' },
+  { key: 'jokaSilenceSec',  label: '序歌の無音', min: 0,  max: 6,  step: 0.5,  unit: '秒' },
+]
 
-function setSliderValue(container: Element, id: string, value: number): void {
-  ;(container.querySelector(`#${id}-num`) as HTMLInputElement).value = String(value)
-  ;(container.querySelector(`#${id}-range`) as HTMLInputElement).value = String(value)
-}
+const APPEARANCE_SLIDERS: SliderDef[] = [
+  { key: 'fillOpacity',  label: '塗り濃度', min: 0,   max: 1,  step: 0.05, unit: '' },
+  { key: 'borderWidth',  label: '枠線太さ', min: 0,   max: 8,  step: 1,    unit: 'px' },
+  { key: 'offsetX',      label: 'ずれ補正 X', min: -80, max: 80, step: 1,  unit: 'px' },
+  { key: 'offsetY',      label: 'ずれ補正 Y', min: -80, max: 80, step: 1,  unit: 'px' },
+]
 
-// ============================================================
-// 設定フォーム構築
-// ============================================================
-function buildSettingsForm(container: HTMLElement, s: Settings): void {
-  container.innerHTML = ''
-
-  const sections = [
-    { title: '音声間隔', sliders: [
-      { id: 'gap-lu', label: '下→上の句の間', min: 0.5, max: 1.5, step: 0.1, key: 'gap_lower_upper', unit: '秒' },
-      { id: 'gap-ul', label: '上→下の句の間', min: 1,   max: 10,  step: 0.5, key: 'gap_upper_lower', unit: '秒' },
-    ]},
-    { title: 'ハイライト タイミング', sliders: [
-      { id: 'hl-base', label: '基準オフセット', min: -2, max: 2, step: 0.05, key: 'hl_base_offset', unit: '秒' },
-      { id: 'hl-char', label: '字数係数',       min: 0.05, max: 1, step: 0.05, key: 'hl_per_char',   unit: '秒/字' },
-    ]},
-    { title: 'ハイライト 外観', sliders: [
-      { id: 'hl-opacity', label: '塗りつぶし不透明度', min: 0, max: 1, step: 0.05, key: 'hl_fill_opacity', unit: '' },
-      { id: 'hl-border',  label: '枠線太さ',           min: 1, max: 5, step: 1,    key: 'hl_border_width', unit: 'px' },
-      { id: 'hl-ox',      label: 'オフセット X',       min: -50, max: 50, step: 1, key: 'hl_offset_x',    unit: 'px' },
-      { id: 'hl-oy',      label: 'オフセット Y',       min: -50, max: 50, step: 1, key: 'hl_offset_y',    unit: 'px' },
-    ]},
-    { title: '投影レイアウト', sliders: [
-      { id: 'row-gap',   label: '段間隔',       min: 0,  max: 30, step: 1, key: 'row_gap_mm',   unit: 'mm' },
-      { id: 'field-gap', label: '自陣・敵陣間', min: 0,  max: 60, step: 1, key: 'field_gap_mm', unit: 'mm' },
-    ]},
-  ]
-
-  for (const sec of sections) {
-    const title = document.createElement('p')
-    title.className = 'section-title'
-    title.style.fontSize = '12px'
-    title.textContent = sec.title
-    container.appendChild(title)
-
-    for (const sl of sec.sliders) {
-      const el = makeSlider(sl.id, sl.label, sl.min, sl.max, sl.step, (s as any)[sl.key], sl.unit)
-      container.appendChild(el)
-    }
-  }
-
-  // カラーピッカー
-  const colorSection = document.createElement('div')
-  colorSection.innerHTML = `
-    <div class="form-row">
-      <label style="min-width:140px;">ハイライト色</label>
-      <input type="color" id="hl-color" value="${s.hl_color}">
-    </div>
-    <div class="form-row">
-      <label style="min-width:140px;">枠線色</label>
-      <input type="color" id="hl-border-color" value="${s.hl_border_color}">
+function _sliderRow(def: SliderDef, cfg: HighlightConfig): string {
+  const v = cfg[def.key] as number
+  return `
+    <div class="hl-row">
+      <label title="${def.hint ?? ''}">${def.label}</label>
+      <input type="range" data-key="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${v}">
+      <span class="hl-val" data-val="${def.key}">${v}${def.unit}</span>
     </div>
   `
-  container.appendChild(colorSection)
+}
+
+function _injectStyles(): void {
+  if (document.getElementById('hl-panel-style')) return
+  const style = document.createElement('style')
+  style.id = 'hl-panel-style'
+  style.textContent = `
+    .hl-row { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+    .hl-row label { min-width:78px; font-size:12px; }
+    .hl-row input[type=range] { flex:1; min-width:80px; }
+    .hl-val { font-size:11px; color:var(--text3); width:56px; text-align:right; }
+    .hl-group { font-size:11px; color:var(--accent2); letter-spacing:0.12em;
+                border-bottom:1px solid var(--border); padding-bottom:4px; margin:12px 0 8px; }
+    .hl-colors { display:flex; gap:14px; flex-wrap:wrap; }
+    .hl-colors label { display:flex; align-items:center; gap:5px; font-size:12px; }
+  `
+  document.head.appendChild(style)
 }
 
 // ============================================================
-// UI 初期化
+// 初期化
 // ============================================================
-export function initSettings(containerSelector: string): void {
+export function initHighlightPanel(containerSelector: string): void {
   const container = document.querySelector<HTMLElement>(containerSelector)
   if (!container) return
+  _injectStyles()
+
+  const cfg = getHighlight()
 
   container.innerHTML = `
-    <div style="display:flex;gap:20px;flex-wrap:wrap;">
-      <!-- プロファイル一覧 -->
-      <div style="flex:1;min-width:200px;">
-        <p class="section-title" style="font-size:13px;">設定プロファイル</p>
-        <div id="settings-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px;"></div>
-        <button id="settings-new" class="primary">＋ 新規作成</button>
-      </div>
+    <p class="hl-group">光らせ方</p>
+    <div class="hl-row">
+      <label>対象</label>
+      <select id="hl-mode" style="flex:1;">
+        <option value="target_only">読まれた札だけ</option>
+        <option value="kimariji_stages">決まり字で段階的に絞り込む</option>
+      </select>
+    </div>
+    <div class="hl-row">
+      <label title="場の残り札から決まり字を計算し直すか、CSVの初期決まり字を使うか">決まり字</label>
+      <select id="hl-source" style="flex:1;">
+        <option value="dynamic">場の残り札から動的に</option>
+        <option value="fixed">初期決まり字（固定）</option>
+      </select>
+    </div>
 
-      <!-- 設定フォーム -->
-      <div id="settings-detail" style="flex:3;min-width:320px;display:none;">
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
-          <input type="text" id="settings-name" placeholder="プロファイル名" style="flex:1;">
-          <button id="settings-save" class="primary">保存</button>
-          <button id="settings-apply">適用</button>
-          <button id="settings-delete" style="color:#e06060;border-color:#e06060;">削除</button>
-          <button id="settings-cancel">閉じる</button>
-        </div>
-        <div id="settings-form-body"></div>
-      </div>
+    <p class="hl-group">タイミング</p>
+    <div id="hl-timing">${TIMING_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
+
+    <p class="hl-group">見た目</p>
+    <div class="hl-colors" style="margin-bottom:10px;">
+      <label>読まれた札 <input type="color" id="hl-target-color" value="${cfg.targetColor}"></label>
+      <label>候補 <input type="color" id="hl-candidate-color" value="${cfg.candidateColor}"></label>
+      <label>枠線 <input type="color" id="hl-border-color" value="${cfg.borderColor}"></label>
+    </div>
+    <div id="hl-appearance">${APPEARANCE_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
+
+    <p class="hl-group">自動再生</p>
+    <div class="hl-row">
+      <label><input type="checkbox" id="hl-autoplay"> 自動で進む</label>
+      <input type="range" id="hl-autoplay-interval" min="0" max="15" step="0.5" value="${cfg.autoPlayIntervalSec}">
+      <span class="hl-val" id="hl-autoplay-val">${cfg.autoPlayIntervalSec}秒</span>
+    </div>
+
+    <div style="margin-top:14px;">
+      <button id="hl-reset" style="font-size:11px;">既定値に戻す</button>
     </div>
   `
 
-  const list       = container.querySelector<HTMLElement>('#settings-list')!
-  const detail     = container.querySelector<HTMLElement>('#settings-detail')!
-  const nameInput  = container.querySelector<HTMLInputElement>('#settings-name')!
-  const formBody   = container.querySelector<HTMLElement>('#settings-form-body')!
-  let _editId: number | undefined
+  const q = <T extends HTMLElement>(sel: string) => container.querySelector<T>(sel)!
 
-  function renderList(): void {
-    const items = db.getSettingsList()
-    list.innerHTML = ''
-    if (items.length === 0) {
-      list.innerHTML = '<span style="color:var(--text3);font-size:12px;">プロファイルがありません</span>'
-      return
-    }
-    for (const item of items) {
-      const el = document.createElement('div')
-      el.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;cursor:pointer;'
-      const isActive = item.id === _active.id
-      el.innerHTML = `
-        <span style="font-size:13px;flex:1;${isActive ? 'color:var(--accent2)' : ''}">${item.name}</span>
-        ${isActive ? '<span style="font-size:10px;color:var(--accent);">使用中</span>' : ''}
-      `
-      el.addEventListener('click', () => openDetail(item))
-      list.appendChild(el)
-    }
+  // --- スライダー（タイミング + 見た目をまとめて） ---
+  const allSliders = [...TIMING_SLIDERS, ...APPEARANCE_SLIDERS]
+  const unitOf = (key: string) => allSliders.find(d => d.key === key)?.unit ?? ''
+
+  container.querySelectorAll<HTMLInputElement>('input[type=range][data-key]').forEach(input => {
+    input.addEventListener('input', () => {
+      const key = input.dataset.key as keyof HighlightConfig
+      const v = parseFloat(input.value)
+      _update({ [key]: v } as Partial<HighlightConfig>)
+      const label = container.querySelector<HTMLElement>(`[data-val="${key}"]`)
+      if (label) label.textContent = `${v}${unitOf(key)}`
+    })
+  })
+
+  // --- セレクト ---
+  const modeSel = q<HTMLSelectElement>('#hl-mode')
+  const srcSel = q<HTMLSelectElement>('#hl-source')
+  modeSel.value = cfg.mode
+  srcSel.value = cfg.source
+  modeSel.addEventListener('change', () => _update({ mode: modeSel.value as HighlightConfig['mode'] }))
+  srcSel.addEventListener('change', () => _update({ source: srcSel.value as HighlightConfig['source'] }))
+
+  // --- 色 ---
+  const colors: Array<[string, keyof HighlightConfig]> = [
+    ['#hl-target-color', 'targetColor'],
+    ['#hl-candidate-color', 'candidateColor'],
+    ['#hl-border-color', 'borderColor'],
+  ]
+  for (const [sel, key] of colors) {
+    const el = q<HTMLInputElement>(sel)
+    el.addEventListener('input', () => _update({ [key]: el.value } as Partial<HighlightConfig>))
   }
 
-  // 編集中のフォームの土台になる設定。スライダーに出ていない項目
-  // （player_id / calibration など）を引き継ぐために保持する。
-  let _formBase: Settings = { name: 'デフォルト', ...DEFAULT_SETTINGS }
-
-  // 変更は保存を待たずに読み上げと投影へ即座に反映する。
-  // openDetail の中で登録すると開くたびにリスナーが増えるので、ここで一度だけ登録する。
-  formBody.addEventListener('change', () => {
-    setActiveSettings(readFormValues(_formBase))
+  // --- 自動再生 ---
+  const auto = q<HTMLInputElement>('#hl-autoplay')
+  const interval = q<HTMLInputElement>('#hl-autoplay-interval')
+  const intervalVal = q<HTMLElement>('#hl-autoplay-val')
+  auto.checked = cfg.autoPlay
+  auto.addEventListener('change', () => _update({ autoPlay: auto.checked }))
+  interval.addEventListener('input', () => {
+    const v = parseFloat(interval.value)
+    _update({ autoPlayIntervalSec: v })
+    intervalVal.textContent = `${v}秒`
   })
 
-  function openDetail(s: Settings): void {
-    _editId = s.id
-    _formBase = s
-    nameInput.value = s.name
-    buildSettingsForm(formBody, s)
-    detail.style.display = ''
-  }
-
-  function readFormValues(base: Settings): Settings {
-    const sliderKeys = [
-      ['gap-lu', 'gap_lower_upper'], ['gap-ul', 'gap_upper_lower'],
-      ['hl-base', 'hl_base_offset'], ['hl-char', 'hl_per_char'],
-      ['hl-opacity', 'hl_fill_opacity'], ['hl-border', 'hl_border_width'],
-      ['hl-ox', 'hl_offset_x'], ['hl-oy', 'hl_offset_y'],
-      ['row-gap', 'row_gap_mm'], ['field-gap', 'field_gap_mm'],
-    ] as const
-    const result = { ...base, name: nameInput.value }
-    for (const [id, key] of sliderKeys) {
-      const el = formBody.querySelector<HTMLInputElement>(`#${id}-num`)
-      if (el) (result as any)[key] = parseFloat(el.value)
-    }
-    const hlColor = formBody.querySelector<HTMLInputElement>('#hl-color')
-    const hlBorder = formBody.querySelector<HTMLInputElement>('#hl-border-color')
-    if (hlColor) result.hl_color = hlColor.value
-    if (hlBorder) result.hl_border_color = hlBorder.value
-    return result
-  }
-
-  function closeDetail(): void {
-    detail.style.display = 'none'
-    _editId = undefined
-  }
-
-  // 新規作成も openDetail を通す（未保存でもスライダーが即反映されるように）
-  container.querySelector('#settings-new')!.addEventListener('click', () => {
-    openDetail({ name: '新しいプロファイル', ...DEFAULT_SETTINGS })
+  // --- 既定値に戻す ---
+  q('#hl-reset').addEventListener('click', () => {
+    _update({ ...DEFAULT_HIGHLIGHT })
+    initHighlightPanel(containerSelector)  // フォームを描き直す
   })
 
-  container.querySelector('#settings-save')!.addEventListener('click', () => {
-    const base = _editId ? (db.getSettings(_editId) ?? _formBase) : _formBase
-    const updated = readFormValues(base)
-    updated.id = _editId
-    updated.id = db.upsertSettings(updated)
-    _editId = updated.id
-    _formBase = updated
-    // 保存したものをそのまま使用中にする
-    setActiveSettings(updated)
-    renderList()
-  })
-
-  container.querySelector('#settings-apply')!.addEventListener('click', () => {
-    if (!_editId) return
-    const s = db.getSettings(_editId)
-    if (s) setActiveSettings(s)
-    renderList()
-  })
-
-  container.querySelector('#settings-delete')!.addEventListener('click', () => {
-    if (!_editId || !confirm('このプロファイルを削除しますか？')) return
-    db.deleteSettings(_editId)
-    closeDetail()
-    renderList()
-  })
-
-  container.querySelector('#settings-cancel')!.addEventListener('click', closeDetail)
-
-  renderList()
+  // 起動時の値を投影へ反映
+  broadcastHighlightConfig()
 }

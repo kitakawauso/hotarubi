@@ -1,71 +1,72 @@
 // ============================================================
-// projection-render.ts — 投影 Canvas 描画・メッシュワープ・ハイライト
+// projection-render.ts — 投影 Canvas 描画・座標変換
+//
+// 描画は2モードだけ:
+//   play      … 通常。何も描かず、光らせる札だけを塗りつぶす。
+//   calibrate … 投影調整。札の有無に関わらず全スロットの枠線を描く。
+// 取り札の画像は投影しない（畳の上の実物に重ねるため）。
 // ============================================================
 
-import { cardImagePath, computeEffectiveKimari, findKimariMatches, getPoems } from './data'
+import type { ArrangementCard, Calibration, HighlightConfig, NormPoint } from './store'
+import { getHighlight, loadCalibration } from './store'
 
 // ============================================================
-// 型定義
+// 型
 // ============================================================
-export interface CalibrationPoint { x: number; y: number }
-
-export interface CalibrationData {
-  corners: [CalibrationPoint, CalibrationPoint, CalibrationPoint, CalibrationPoint] | null  // TL,TR,BL,BR
-  rowEdges: Array<{ left: CalibrationPoint; right: CalibrationPoint }> | null               // 7要素
-}
-
-export interface FieldCard {
-  poem_id: number
-  row: number  // 0-2
-  col: number  // 0-15
-}
-
 export interface ProjectionState {
-  cards: { self: FieldCard[]; enemy: FieldCard[] }
-  highlights: number[]           // ハイライト中の poem_id 一覧
-  calibration: CalibrationData
-  settings: {
-    row_gap_mm: number
-    field_gap_mm: number
-    hl_color: string
-    hl_border_color: string
-    hl_fill_opacity: number
-    hl_border_width: number
-    hl_offset_x: number
-    hl_offset_y: number
-    hl_base_offset: number
-    hl_per_char: number
-  }
+  mode: 'play' | 'calibrate'
+  cards: { self: ArrangementCard[]; enemy: ArrangementCard[] }
+  /** 読まれた札（濃い色） */
+  targetIds: number[]
+  /** 決まり字が一致する他の札（薄い色）。mode=target_only なら空。 */
+  candidateIds: number[]
+  calibration: Calibration
+  highlight: HighlightConfig
 }
 
 // ============================================================
-// カード物理寸法（mm）→ 論理比率
+// 投影ウィンドウへの送信（操作画面側から呼ぶ）
+//
+// 投影ウィンドウは「変更があったとき」しか受け取らないので、
+// 起動通知（hello）を受けたら broadcastAll() で全部送り直すこと。
+// ============================================================
+const _channel = new BroadcastChannel('hotarubi-projection')
+
+export function broadcastHighlight(targetIds: number[], candidateIds: number[]): void {
+  _channel.postMessage({ type: 'highlight', targetIds, candidateIds })
+}
+
+export function clearHighlight(): void {
+  _channel.postMessage({ type: 'clear_highlights' })
+}
+
+export function broadcastMode(mode: ProjectionState['mode']): void {
+  _channel.postMessage({ type: 'mode', mode })
+}
+
+export function broadcastPartial(payload: Partial<ProjectionState>): void {
+  _channel.postMessage({ type: 'state', payload })
+}
+
+/** 配置・調整・ハイライト設定をまとめて送る */
+export function broadcastAll(cards: ProjectionState['cards']): void {
+  broadcastPartial({ cards, calibration: loadCalibration(), highlight: getHighlight() })
+}
+
+// ============================================================
+// 盤面の論理寸法（mm）
 // ============================================================
 const CARD_W_MM = 52
 const CARD_H_MM = 73
 const COLS = 16
 const ROWS_PER_FIELD = 3
 
-// 画像キャッシュ
-const _imgCache = new Map<string, HTMLImageElement>()
-
-function loadImage(src: string): Promise<HTMLImageElement> {
-  if (_imgCache.has(src)) return Promise.resolve(_imgCache.get(src)!)
-  return new Promise(resolve => {
-    const img = new Image()
-    img.onload = () => { _imgCache.set(src, img); resolve(img) }
-    img.onerror = () => { _imgCache.set(src, img); resolve(img) }
-    img.src = src
-  })
-}
-
-function preloadImage(src: string): void {
-  if (_imgCache.has(src)) return
-  loadImage(src)
-}
+// 調整モードの枠線（畳の上で見やすい色）
+const CALIB_LINE = '#00e5ff'
+const CALIB_EDGE = '#ff4081'
 
 // ============================================================
-// メイン描画関数
+// メイン描画
 // ============================================================
 export function renderProjection(
   ctx: CanvasRenderingContext2D,
@@ -77,67 +78,46 @@ export function renderProjection(
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, canvasW, canvasH)
 
-  const { settings, calibration } = state
-
-  const totalRowGap = (ROWS_PER_FIELD - 1) * settings.row_gap_mm
+  const { calibration } = state
+  const fieldH = ROWS_PER_FIELD * CARD_H_MM + (ROWS_PER_FIELD - 1) * calibration.rowGapMm
   const logW = COLS * CARD_W_MM
-  const fieldH = ROWS_PER_FIELD * CARD_H_MM + totalRowGap
-  const logH = fieldH * 2 + settings.field_gap_mm
+  const logH = fieldH * 2 + calibration.fieldGapMm
 
-  if (calibration.corners) {
-    drawWarped(ctx, state, logW, logH, fieldH)
+  const toScreen = makeTransform(calibration, canvasW, canvasH, logW, logH)
+
+  if (state.mode === 'calibrate') {
+    drawCalibrationGuide(ctx, state, logW, fieldH, toScreen)
   } else {
-    drawFitted(ctx, canvasW, canvasH, state, logW, logH, fieldH)
+    drawHighlights(ctx, state, logW, fieldH, toScreen)
   }
 }
 
 // ============================================================
-// キャリブレーションなし: 画面にフィット
+// 論理座標（mm）→ 画面座標
+// 正規化キャリブレーション（0〜1）× キャンバス実寸で解決する。
 // ============================================================
-function drawFitted(
-  ctx: CanvasRenderingContext2D,
-  canvasW: number,
-  canvasH: number,
-  state: ProjectionState,
-  logW: number,
-  logH: number,
-  fieldH: number
-): void {
-  const scale = Math.min(canvasW / logW, canvasH / logH)
-  const ox = (canvasW - logW * scale) / 2
-  const oy = (canvasH - logH * scale) / 2
-  const toScreen = (lx: number, ly: number) => ({ x: ox + lx * scale, y: oy + ly * scale })
-  drawGrid(ctx, state, logW, fieldH, toScreen)
-}
+type Transform = (lx: number, ly: number) => { x: number; y: number }
 
-// ============================================================
-// キャリブレーションあり: メッシュワープ
-// ============================================================
-function drawWarped(
-  ctx: CanvasRenderingContext2D,
-  state: ProjectionState,
-  logW: number,
-  logH: number,
-  fieldH: number
-): void {
-  const { corners, rowEdges } = state.calibration
-  if (!corners) return
+function makeTransform(
+  cal: Calibration, canvasW: number, canvasH: number,
+  logW: number, logH: number
+): Transform {
+  const px = (p: NormPoint) => ({ x: p.x * canvasW, y: p.y * canvasH })
+  const [TL, TR, BL, BR] = cal.corners.map(px) as [
+    { x: number; y: number }, { x: number; y: number },
+    { x: number; y: number }, { x: number; y: number }
+  ]
 
-  const [TL, TR, BL, BR] = corners
-
-  let toScreen: (lx: number, ly: number) => { x: number; y: number }
-
-  if (rowEdges && rowEdges.length > 0) {
-    // rowEdges（絶対座標）+ corners で縦方向を線形補間
-    const n = rowEdges.length
+  if (cal.rowEdges && cal.rowEdges.length > 0) {
+    // 縦方向は行エッジを通る区分線形補間、横方向は線形
+    const n = cal.rowEdges.length
     const vPts = [0, ...Array.from({ length: n }, (_, i) => (i + 1) / (n + 1)), 1]
-    const leftPts  = [TL, ...rowEdges.map(e => e.left),  BL]
-    const rightPts = [TR, ...rowEdges.map(e => e.right), BR]
+    const leftPts = [TL, ...cal.rowEdges.map(e => px(e.left)), BL]
+    const rightPts = [TR, ...cal.rowEdges.map(e => px(e.right)), BR]
 
-    toScreen = (lx, ly) => {
+    return (lx, ly) => {
       const u = lx / logW
       const v = ly / logH
-      // v が属するセグメントを探す
       let seg = vPts.length - 2
       for (let i = 0; i < vPts.length - 1; i++) {
         if (v <= vPts[i + 1]) { seg = i; break }
@@ -154,210 +134,152 @@ function drawWarped(
       }
       return { x: lp.x + (rp.x - lp.x) * u, y: lp.y + (rp.y - lp.y) * u }
     }
-  } else {
-    // bilinear（4隅のみ）
-    toScreen = (lx, ly) => {
-      const u = lx / logW
-      const v = ly / logH
-      return {
-        x: (1-u)*(1-v)*TL.x + u*(1-v)*TR.x + (1-u)*v*BL.x + u*v*BR.x,
-        y: (1-u)*(1-v)*TL.y + u*(1-v)*TR.y + (1-u)*v*BL.y + u*v*BR.y,
-      }
-    }
   }
 
-  drawGrid(ctx, state, logW, fieldH, toScreen)
+  // 四隅のみ: bilinear
+  return (lx, ly) => {
+    const u = lx / logW
+    const v = ly / logH
+    return {
+      x: (1-u)*(1-v)*TL.x + u*(1-v)*TR.x + (1-u)*v*BL.x + u*v*BR.x,
+      y: (1-u)*(1-v)*TL.y + u*(1-v)*TR.y + (1-u)*v*BL.y + u*v*BR.y,
+    }
+  }
 }
 
 // ============================================================
-// グリッド描画（敵陣は180°回転）
+// スロットの四隅を求める
+// 敵陣（field=0, 上半分）は論理座標を反転して 180° 回転させる。
 // ============================================================
-function drawGrid(
+type Quad = [
+  { x: number; y: number }, { x: number; y: number },
+  { x: number; y: number }, { x: number; y: number }
+]
+
+function slotQuad(
+  isEnemy: boolean, row: number, col: number,
+  logW: number, fieldH: number, rowGapMm: number, fieldGapMm: number,
+  toScreen: Transform
+): Quad {
+  const baseY = isEnemy ? 0 : fieldH + fieldGapMm
+  const ly = baseY + row * (CARD_H_MM + rowGapMm)
+  const lx = col * CARD_W_MM
+
+  if (isEnemy) {
+    const rlx = logW - lx - CARD_W_MM
+    const rly = fieldH - (ly - baseY) - CARD_H_MM
+    return [
+      toScreen(rlx + CARD_W_MM, rly + CARD_H_MM),
+      toScreen(rlx,             rly + CARD_H_MM),
+      toScreen(rlx,             rly),
+      toScreen(rlx + CARD_W_MM, rly),
+    ]
+  }
+  return [
+    toScreen(lx,              ly),
+    toScreen(lx + CARD_W_MM,  ly),
+    toScreen(lx + CARD_W_MM,  ly + CARD_H_MM),
+    toScreen(lx,              ly + CARD_H_MM),
+  ]
+}
+
+function pathQuad(ctx: CanvasRenderingContext2D, q: Quad, ox = 0, oy = 0): void {
+  ctx.beginPath()
+  ctx.moveTo(q[0].x + ox, q[0].y + oy)
+  ctx.lineTo(q[1].x + ox, q[1].y + oy)
+  ctx.lineTo(q[2].x + ox, q[2].y + oy)
+  ctx.lineTo(q[3].x + ox, q[3].y + oy)
+  ctx.closePath()
+}
+
+// ============================================================
+// 投影調整モード: 全スロットの枠線
+// 番号も着色もしない。位置合わせに必要な線だけを描く。
+// ============================================================
+function drawCalibrationGuide(
   ctx: CanvasRenderingContext2D,
   state: ProjectionState,
-  logW: number,
-  fieldH: number,
-  toScreen: (lx: number, ly: number) => { x: number; y: number }
+  logW: number, fieldH: number,
+  toScreen: Transform
 ): void {
-  const { settings, cards, highlights } = state
-  const rowGap = settings.row_gap_mm
-  const fieldGap = settings.field_gap_mm
+  const { rowGapMm, fieldGapMm } = state.calibration
 
-  const selfMap = new Map<string, number>()
-  for (const c of cards.self) selfMap.set(`${c.row},${c.col}`, c.poem_id)
-  const enemyMap = new Map<string, number>()
-  for (const c of cards.enemy) enemyMap.set(`${c.row},${c.col}`, c.poem_id)
+  ctx.save()
+  ctx.strokeStyle = CALIB_LINE
+  ctx.lineWidth = 1.5
 
-  const highlightSet = new Set(highlights)
-
-  // 敵陣: 論理Y=0〜fieldH（上半分）
-  // 自陣: 論理Y=fieldH+fieldGap〜2*fieldH+fieldGap（下半分）
   for (let field = 0; field < 2; field++) {
     const isEnemy = field === 0
-    const baseY = isEnemy ? 0 : fieldH + fieldGap
-    const slotMap = isEnemy ? enemyMap : selfMap
-
     for (let row = 0; row < ROWS_PER_FIELD; row++) {
-      const rowY = baseY + row * (CARD_H_MM + rowGap)
       for (let col = 0; col < COLS; col++) {
-        const lx = col * CARD_W_MM
-        const ly = rowY
-
-        let sc0: {x:number,y:number}, sc1: {x:number,y:number},
-            sc2: {x:number,y:number}, sc3: {x:number,y:number}
-
-        if (isEnemy) {
-          // 敵陣: 行・列ともに逆順で 180° 回転
-          const rlx = logW - lx - CARD_W_MM
-          const rly = fieldH - ly - CARD_H_MM
-          sc0 = toScreen(rlx + CARD_W_MM, rly + CARD_H_MM)  // TL(回転後)
-          sc1 = toScreen(rlx,             rly + CARD_H_MM)  // TR
-          sc2 = toScreen(rlx + CARD_W_MM, rly)              // BL
-          sc3 = toScreen(rlx,             rly)               // BR
-        } else {
-          sc0 = toScreen(lx,            ly)
-          sc1 = toScreen(lx + CARD_W_MM, ly)
-          sc2 = toScreen(lx,            ly + CARD_H_MM)
-          sc3 = toScreen(lx + CARD_W_MM, ly + CARD_H_MM)
-        }
-
-        const poemId = slotMap.get(`${row},${col}`) ?? null
-        drawCardQuad(ctx, sc0, sc1, sc2, sc3, poemId, highlightSet.has(poemId ?? -1), settings)
+        const q = slotQuad(isEnemy, row, col, logW, fieldH, rowGapMm, fieldGapMm, toScreen)
+        pathQuad(ctx, q)
+        ctx.stroke()
       }
     }
   }
-}
 
-// ============================================================
-// 任意四角形へのカード描画（アフィン変換）
-// tl=左上, tr=右上, bl=左下, br=右下（画面座標）
-// ============================================================
-function drawCardQuad(
-  ctx: CanvasRenderingContext2D,
-  tl: {x:number,y:number}, tr: {x:number,y:number},
-  bl: {x:number,y:number}, br: {x:number,y:number},
-  poemId: number | null,
-  highlighted: boolean,
-  settings: ProjectionState['settings']
-): void {
-  ctx.save()
-
-  // クリッピングパス（四角形）
-  ctx.beginPath()
-  ctx.moveTo(tl.x, tl.y)
-  ctx.lineTo(tr.x, tr.y)
-  ctx.lineTo(br.x, br.y)
-  ctx.lineTo(bl.x, bl.y)
-  ctx.closePath()
-  ctx.clip()
-
-  if (poemId !== null) {
-    const src = cardImagePath(poemId)
-    const img = _imgCache.get(src)
-
-    if (img?.complete && img.naturalWidth > 0) {
-      const iW = img.naturalWidth
-      const iH = img.naturalHeight
-      // アフィン変換: 画像 (0,0)→tl, (iW,0)→tr, (0,iH)→bl
-      // setTransform(a, b, c, d, e, f) where:
-      //   a,b: how x-axis of image maps to screen
-      //   c,d: how y-axis of image maps to screen
-      //   e,f: origin offset (tl)
-      ctx.save()
-      ctx.setTransform(
-        (tr.x - tl.x) / iW, (tr.y - tl.y) / iW,
-        (bl.x - tl.x) / iH, (bl.y - tl.y) / iH,
-        tl.x, tl.y
-      )
-      ctx.drawImage(img, 0, 0)
-      ctx.restore()
-    } else {
-      // 未ロード: プレースホルダー
-      preloadImage(src)
-      const cx = (tl.x + tr.x + bl.x + br.x) / 4
-      const cy = (tl.y + tr.y + bl.y + br.y) / 4
-      const h = Math.hypot(bl.x - tl.x, bl.y - tl.y)
-      ctx.fillStyle = '#2a1a08'
-      ctx.beginPath()
-      ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y)
-      ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y)
-      ctx.closePath(); ctx.fill()
-      ctx.fillStyle = '#c8900a'
-      ctx.font = `${Math.max(h * 0.25, 8)}px serif`
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
-      ctx.fillText(String(poemId), cx, cy)
-    }
-
-    // ハイライトオーバーレイ（スクリーン座標で、hl_offset_x/y 分シフト）
-    if (highlighted) {
-      const { hl_color, hl_border_color, hl_fill_opacity, hl_border_width, hl_offset_x, hl_offset_y } = settings
-      const ox = hl_offset_x
-      const oy = hl_offset_y
-      const hex = hl_color.replace('#', '')
-      const r = parseInt(hex.slice(0, 2), 16)
-      const g = parseInt(hex.slice(2, 4), 16)
-      const b = parseInt(hex.slice(4, 6), 16)
-      ctx.fillStyle = `rgba(${r},${g},${b},${hl_fill_opacity})`
-      ctx.beginPath()
-      ctx.moveTo(tl.x + ox, tl.y + oy); ctx.lineTo(tr.x + ox, tr.y + oy)
-      ctx.lineTo(br.x + ox, br.y + oy); ctx.lineTo(bl.x + ox, bl.y + oy)
-      ctx.closePath(); ctx.fill()
-      ctx.strokeStyle = hl_border_color
-      ctx.lineWidth = hl_border_width
-      ctx.beginPath()
-      ctx.moveTo(tl.x + ox, tl.y + oy); ctx.lineTo(tr.x + ox, tr.y + oy)
-      ctx.lineTo(br.x + ox, br.y + oy); ctx.lineTo(bl.x + ox, bl.y + oy)
-      ctx.closePath(); ctx.stroke()
-    }
-  } else {
-    // 空スロット
-    ctx.strokeStyle = '#2a2010'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(tl.x, tl.y); ctx.lineTo(tr.x, tr.y)
-    ctx.lineTo(br.x, br.y); ctx.lineTo(bl.x, bl.y)
-    ctx.closePath(); ctx.stroke()
-  }
+  // 盤面全体の外枠は太く（四隅を合わせやすくするため）
+  ctx.strokeStyle = CALIB_EDGE
+  ctx.lineWidth = 3
+  const logH = fieldH * 2 + fieldGapMm
+  pathQuad(ctx, [
+    toScreen(0, 0), toScreen(logW, 0),
+    toScreen(logW, logH), toScreen(0, logH),
+  ])
+  ctx.stroke()
 
   ctx.restore()
 }
 
 // ============================================================
-// ハイライトスケジューラ
+// 通常モード: 光らせる札だけ塗りつぶす
 // ============================================================
-const _pendingHighlightTimers: ReturnType<typeof setTimeout>[] = []
-
-export function scheduleHighlights(
-  poemId: number,
-  upperStartAbsMs: number,
-  settings: ProjectionState['settings'],
-  remainingIds: number[],
-  channel: BroadcastChannel
+function drawHighlights(
+  ctx: CanvasRenderingContext2D,
+  state: ProjectionState,
+  logW: number, fieldH: number,
+  toScreen: Transform
 ): void {
-  clearScheduledHighlights()
+  const { cards, targetIds, candidateIds, calibration, highlight } = state
+  if (targetIds.length === 0 && candidateIds.length === 0) return
 
-  const poems = getPoems()
-  const effectiveKimari = computeEffectiveKimari(remainingIds, poems)
-  const currentKimari = effectiveKimari.get(poemId)
-  if (!currentKimari) return
+  const targets = new Set(targetIds)
+  const candidates = new Set(candidateIds)
 
-  for (let len = 1; len <= currentKimari.length; len++) {
-    const prefix = currentKimari.slice(0, len)
-    const t = upperStartAbsMs
-      + settings.hl_base_offset * 1000
-      + len * settings.hl_per_char * 1000
+  ctx.save()
+  for (const [isEnemy, list] of [[true, cards.enemy], [false, cards.self]] as const) {
+    for (const card of list) {
+      const isTarget = targets.has(card.poem_id)
+      const isCandidate = !isTarget && candidates.has(card.poem_id)
+      if (!isTarget && !isCandidate) continue
 
-    const targets = findKimariMatches(prefix, remainingIds, effectiveKimari)
-    const isFinal = len === currentKimari.length
-    const delay = Math.max(0, t - Date.now())
-
-    _pendingHighlightTimers.push(setTimeout(() => {
-      channel.postMessage({ type: 'highlight', highlights: targets, final: isFinal })
-    }, delay))
+      const q = slotQuad(
+        isEnemy, card.row, card.col,
+        logW, fieldH, calibration.rowGapMm, calibration.fieldGapMm, toScreen
+      )
+      fillCard(ctx, q, isTarget ? highlight.targetColor : highlight.candidateColor, highlight)
+    }
   }
+  ctx.restore()
 }
 
-export function clearScheduledHighlights(): void {
-  for (const t of _pendingHighlightTimers) clearTimeout(t)
-  _pendingHighlightTimers.length = 0
+function fillCard(
+  ctx: CanvasRenderingContext2D, q: Quad,
+  color: string, hl: HighlightConfig
+): void {
+  const { offsetX: ox, offsetY: oy } = hl
+
+  ctx.globalAlpha = hl.fillOpacity
+  ctx.fillStyle = color
+  pathQuad(ctx, q, ox, oy)
+  ctx.fill()
+
+  ctx.globalAlpha = 1
+  if (hl.borderWidth > 0) {
+    ctx.strokeStyle = hl.borderColor
+    ctx.lineWidth = hl.borderWidth
+    pathQuad(ctx, q, ox, oy)
+    ctx.stroke()
+  }
 }

@@ -45,3 +45,142 @@
 - **プロジェクター + PC（ノートPC）標準搭載Webカメラのみ。** 外付けカメラ・深度センサー（Kinect等）は使用しない。
 - `src/posture.ts` の姿勢推定はこの前提で実装されている（`navigator.mediaDevices.getUserMedia` で既定カメラを取得するだけでよく、複数カメラの選択・切替UIは不要）。
 - カメラを複数台にする、専用の測定ハードウェアを追加する、といった前提の機能追加は現状スコープ外。依頼された場合は前提が変わったか確認すること。
+
+---
+
+# 実装ガイド
+
+## 開発コマンド
+
+```bash
+npm run dev      # Vite 開発サーバー（COOP/COEP ヘッダ付き。OPFS はこれが無いと動かない）
+npx tsc --noEmit # 型チェック
+npm run build    # tsc -b && vite build
+npm run preview  # dist をプレビュー（COOP/COEP は preview にも効く）
+```
+
+テストランナー・Linter・フォーマッタは導入していません。変更後は最低限 `npx tsc --noEmit` と `npm run build` を通してください。
+
+## 技術構成と制約
+
+- **Vanilla TypeScript + Vite。** フレームワークは使いません。UI は各モジュールの `initXxx(selector)` が `innerHTML` でマークアップを流し込み、`querySelector` でイベントを張る方式に統一されています。
+- **ファイル数は極力増やさない。** 新機能は原則として既存の 13 ファイルのどれかに足します。新規ファイルを作るのは、既存のどのモジュールにも属さない独立した関心事の場合だけにしてください。
+- **`@sqlite.org/sqlite-wasm` + OPFS。** Cross-Origin Isolation（COOP/COEP）が必須で、`vite.config.ts` の `server.headers` で設定済み。ヘッダが無い環境ではメモリ DB にフォールバックし、リロードで計測データが消えます。
+- **`@mediapipe/tasks-vision`。** WASM とモデル（`pose_landmarker_lite`）を CDN から取得するため、姿勢推定にはインターネット接続が必要です。
+- **状態はモジュールスコープの変数で持つ。** グローバルなストアや状態管理ライブラリはありません（`_grid`, `_state`, `_calibration` など）。
+
+## アーキテクチャ
+
+エントリポイントは2つ。`vite.config.ts` の `rollupOptions.input` で両方をビルド対象にしています。
+
+```
+index.html  → src/main.ts       研究者用の操作画面（6タブ）
+projection.html → src/projection.ts   投影用の表示専用画面（Canvas 1枚のみ）
+```
+
+### 2画面間の通信
+
+`BroadcastChannel('hotarubi-projection')` の **一方向（操作画面 → 投影画面）** です。例外は投影調整のプレビュー同期で使う `ping`/`pong` だけ。
+
+| メッセージ | 送信元 | 内容 |
+| --- | --- | --- |
+| `state` | `card-grid.ts` | 自陣・敵陣の札配置 |
+| `highlight` | `projection-render.ts` の `scheduleHighlights` | ハイライトする poem_id の配列 |
+| `clear_highlights` | `audio.ts` | 読み上げ停止・終了時 |
+| `settings` | `settings.ts` | ハイライト外観・投影レイアウト |
+| `calibration` | `calibration.ts` | 四隅と行エッジの座標 |
+
+メッセージ型は `src/projection.ts` の `ProjectionMessage` に定義されています。投影側は状態を受け取って `renderProjection()` を呼ぶだけで、ロジックを持ちません。
+
+### 中心にあるのは読み上げイベント
+
+`src/audio.ts` が読み上げステートマシンであると同時に、システム全体のイベントバスです。**新しい計測を追加するときは、原則ここに購読者を足す形になります。**
+
+```
+audio.ts (ステートマシン)
+  idle → jouka_upper → jouka_lower → jouka_lower_again → gap
+       → upper → wait_for_lower → lower → gap → (次の札へ)
+
+  onReadingEvent() で以下を配信:
+    session_start / upper_start / lower_start / lower_end / session_end
+
+  購読者:
+    session.ts  … reading_log への記録、配置スナップショット保存、取られた札の除去
+    posture.ts  … 骨格キャプチャ窓の開閉（lower_end で pre_upper 開始、
+                  upper_start で post_upper に切替え、gap_upper_lower 秒後に停止）
+```
+
+`upper_start` の時点ではまだ `reading_log.id` が確定していないため、`posture.ts` はいったん直前の札の `log_id` でフレームをバッファし、`upper_start` 受信時に確定した `log_id` へ付け替えています（`posture.ts` の該当コメント参照）。ここを触るときは順序依存に注意してください。
+
+### 決まり字の動的計算
+
+`src/data.ts` の `computeEffectiveKimari(remainingIds, allPoems)` が中核です。CSV の初期決まり字ではなく、**場に残っている札だけで一意に特定できる最小プレフィックス** を毎回計算し直します。札が取られて減るほど決まり字は短くなります。
+
+`scheduleHighlights()` はこの結果をもとに、プレフィックス長 `len` ごとに
+
+```
+点灯時刻 = 上の句開始時刻 + hl_base_offset + len × hl_per_char
+```
+
+のタイマーを張り、その時点で該当する札の集合を投影側へ送ります。**ハイライトのタイミング制御は全てここに集約されているので、RQ1 に関わる見せ方の変更はこの関数と `projection-render.ts` の `drawCardQuad()` を見てください。**
+
+### 投影の座標変換
+
+論理座標（mm 単位、16列 × 3段 × 2陣）→ 画面座標の変換が `projection-render.ts` にあります。
+
+- キャリブレーション未設定 → `drawFitted()`（画面にフィット）
+- 四隅のみ設定 → `drawWarped()` の bilinear 補間
+- 行エッジも設定（行ワープモード）→ 各行の左右端を通る区分線形補間
+
+敵陣は論理座標を反転して 180° 回転させて描画します（`drawGrid()` 内）。カードは 52 × 73 mm 固定。
+
+### モジュール一覧
+
+| ファイル | 役割 |
+| --- | --- |
+| `main.ts` | タブルーター、共有モーダル、トースト、起動処理 |
+| `db.ts` | SQLite 初期化・全テーブル定義・型・クエリ関数（`db` オブジェクト） |
+| `data.ts` | 百人一首 CSV 読み込み、アセットパス解決、決まり字計算 |
+| `audio.ts` | 読み上げステートマシン、読み上げイベント配信、読み上げパネル UI |
+| `session.ts` | セッション開始/終了、`reading_log` と配置スナップショットの記録 |
+| `card-grid.ts` | 札配置グリッド UI と配置状態の保持、配置パターン A〜E |
+| `projection-render.ts` | 投影 Canvas 描画、座標変換、ハイライトスケジューラ |
+| `projection.ts` | 投影ウィンドウのエントリ（受信して描画するだけ） |
+| `calibration.ts` | 投影調整 UI（四隅・行エッジのドラッグ） |
+| `posture.ts` | MediaPipe Pose、カメラ制御、骨格キャプチャと可視化 |
+| `player.ts` | プレイヤー CRUD UI |
+| `settings.ts` | 設定プロファイル CRUD UI、アクティブ設定の配信 |
+| `review.ts` | 振り返り UI（単試合・複数試合比較） |
+
+## 既知の未接続・実装の穴
+
+以下はコードを読んで確認済みの「繋がっていない箇所」です。**研究データの妥当性に直接効くものが含まれているので、関連する作業を依頼されたら真っ先にここを疑ってください。**
+
+1. **セッションにプレイヤーと設定が紐付いていない。**
+   `session.ts` の `startSession()` は第3引数の `settings` を `_currentSettings` から受け取りますが、`_currentSettings` に外部から値を入れる経路がありません。結果として `sessions` 行は常に `player_id = NULL`、`settings_id = NULL`、`settings_snapshot = '{}'` で記録されます。`settings.ts` の `getActiveSettings()` も、`session.ts` の `getSessionSettings()` も呼び出し元がありません。
+   → 誰のどの条件の記録かが DB から復元できない状態です。
+
+2. **`sessions.has_highlight` が常に 1 で固定。**
+   `session.ts` にリテラルで `has_highlight: 1` と書かれており、ハイライト無し条件を記録する手段がありません。RQ1 の比較条件そのものなので、条件切り替えを実装するときはここと操作 UI の両方が必要です。
+
+3. **キャリブレーションが永続化されていない。**
+   `settings` テーブルに `calibration` 列があり `calibration.ts` は `db` を import していますが、実際には使っていません。`initCalibration()` は `_defaultCalibration()` で初期化するだけなので、ページを再読み込みするたびに投影調整をやり直すことになります。
+
+4. **保存した配置を復元できない。**
+   `card-grid.ts` の `setArrangement()` は export されていますが呼び出し元がありません。`arrangements` テーブルには保存されていく一方です。
+
+5. **端寄せ自動（コンパクトモード）の経路が二重。**
+   `session.ts` の `enableCompactMode()` は未使用で、実際に効いているのはツールバーのチェックボックスが直接書き換える `card-grid.ts` の `_compactMode` だけです。ただし `session.ts` は `removeCard(e.poemId, _compactEnabled)` と自前の `_compactEnabled`（常に false）を渡すため、**チェックボックスを ON にしても札が取られたときの自動端寄せは働きません。**
+
+6. **シャッフルにバイアスがある。**
+   読み順（`audio.ts`）と配置（`card-grid.ts`）の両方で `.sort(() => Math.random() - 0.5)` を使っています。一様分布ではないので、順序のランダム性が結果に効く分析をするなら Fisher-Yates に置き換えてください。
+
+7. **振り返りは中間フレーム1枚しか描画しない。**
+   `review.ts` は `frames[Math.floor(frames.length / 2)]` を表示するだけで、時系列の再生も動作開始点の抽出もありません。上の「評価指標」の方針に沿った実装はこれからです。
+
+## コーディング上の約束事
+
+- コメントもコミットメッセージも日本語。既存ファイルは `// ===...===` の帯コメントでセクションを区切っているので合わせてください。
+- モジュール内部の変数・関数は `_` プレフィックス、export するものは付けない、という慣習になっています。
+- DB のカラム名は snake_case、TypeScript の変数は camelCase。`db.ts` の型定義は DB のカラム名をそのまま使っています。
+- 数値設定の追加は `db.ts` の `Settings` 型 + `DEFAULT_SETTINGS` + `CREATE TABLE` + `upsertSettings()` の4箇所、UI は `settings.ts` の `buildSettingsForm()` の `sections` 配列と `readFormValues()` の `sliderKeys` に足す、という手順になります。投影に反映するなら `setActiveSettings()` のブロードキャストと `ProjectionState['settings']` にも追加が必要です。

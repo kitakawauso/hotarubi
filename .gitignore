@@ -1,0 +1,14 @@
+# dependencies / build artifacts
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+
+# 研究用アセット（第三者の読手音声・取り札画像）はリポジトリに含めない。
+# ローカルの public/ 配下に各自で配置する。配置規則は README.md を参照。
+public/audio/readers/*
+!public/audio/readers/.gitkeep
+public/images/torifuda/*
+!public/images/torifuda/.gitkeep

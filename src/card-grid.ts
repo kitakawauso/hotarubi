@@ -7,6 +7,7 @@ import { broadcastAll } from './projection-render'
 import {
   loadArrangements, saveArrangement, deleteArrangement,
   loadCardSet, saveCardSet,
+  loadCurrentArrangement, saveCurrentArrangement,
   type ArrangementCard, type SavedArrangement,
 } from './store'
 
@@ -43,6 +44,7 @@ export function onArrangementChange(cb: ChangeHandler): () => void {
 
 function _notifyChange(): void {
   for (const h of [..._changeHandlers]) h()
+  saveCurrentArrangement(getArrangement())
   broadcastArrangement()
 }
 
@@ -79,6 +81,17 @@ export function getArrangement(): { self: ArrangementCard[]; enemy: ArrangementC
     return cards
   }
   return { self: toCards(_grid[0]), enemy: toCards(_grid[1]) }
+}
+
+/**
+ * 前回の作業中の配置を読み戻す。UI を作る前でも呼べるよう、
+ * グリッドの状態だけを埋めて描画はしない（起動時に main.ts から呼ぶ）。
+ */
+export function restoreCurrentArrangement(): void {
+  const saved = loadCurrentArrangement()
+  if (saved.self.length === 0 && saved.enemy.length === 0) return
+  for (const c of saved.self) _grid[0][c.row][c.col] = c.poem_id
+  for (const c of saved.enemy) _grid[1][c.row][c.col] = c.poem_id
 }
 
 /** 場に出ている札の poem_id 一覧（決まり字計算とハイライト対象の判定に使う） */

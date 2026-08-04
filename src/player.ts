@@ -2,9 +2,29 @@
 // player.ts — プレイヤー管理UI
 // ============================================================
 
-import { db, type Player } from './db'
+import { loadPlayers, savePlayers, type StoredPlayer } from './store'
 
 const RANK_LABELS = ['未設定', '初段', '二段', '三段', '四段', '五段', '六段', '七段']
+
+type Player = StoredPlayer
+
+// SQLite はメモリDBに落ちて再読み込みで消えるため、プレイヤーは localStorage に持つ。
+const _players = {
+  list(): Player[] { return loadPlayers() },
+  upsert(p: Player): void {
+    const list = loadPlayers()
+    const i = list.findIndex(x => x.id === p.id)
+    if (i >= 0) list[i] = p
+    else list.push(p)
+    savePlayers(list)
+  },
+  remove(id: number): void {
+    savePlayers(loadPlayers().filter(p => p.id !== id))
+  },
+  nextId(): number {
+    return Math.max(0, ...loadPlayers().map(p => p.id)) + 1
+  },
+}
 
 export function initPlayers(containerSelector: string): void {
   const container = document.querySelector<HTMLElement>(containerSelector)
@@ -70,7 +90,7 @@ export function initPlayers(containerSelector: string): void {
   const deleteBtn  = container.querySelector<HTMLButtonElement>('#pf-delete')!
 
   function renderList(): void {
-    const players = db.getPlayers()
+    const players = _players.list()
     list.innerHTML = ''
     if (players.length === 0) {
       list.innerHTML = '<span style="color:var(--text3);font-size:12px;">プレイヤーがいません</span>'
@@ -116,7 +136,7 @@ export function initPlayers(containerSelector: string): void {
   deleteBtn.addEventListener('click', () => {
     const id = parseInt(idInput.value)
     if (!id || !confirm('このプレイヤーを削除しますか？')) return
-    db.deletePlayer(id)
+    _players.remove(id)
     closeForm()
     renderList()
   })
@@ -124,17 +144,16 @@ export function initPlayers(containerSelector: string): void {
   form.addEventListener('submit', e => {
     e.preventDefault()
     const id = parseInt(idInput.value) || undefined
-    const player: Player = {
-      id,
-      name: nameInput.value.trim(),
+    const name = nameInput.value.trim()
+    if (!name) return
+    _players.upsert({
+      id: id ?? _players.nextId(),
+      name,
       rank: parseInt(rankSel.value),
       gender: (genderSel.value || undefined) as Player['gender'],
       age: ageInput.value ? parseInt(ageInput.value) : undefined,
       height_cm: heightInput.value ? parseFloat(heightInput.value) : undefined,
-    }
-    if (!player.name) return
-    if (id) db.updatePlayer(player)
-    else db.insertPlayer(player)
+    })
     closeForm()
     renderList()
   })

@@ -12,6 +12,8 @@ const KEY_ARRANGEMENTS = 'hotarubi_arrangements'
 const KEY_HIGHLIGHT = 'hotarubi_highlight'
 const KEY_READSET = 'hotarubi_readset'
 const KEY_CARDSET = 'hotarubi_cardset'
+const KEY_CURRENT_ARR = 'hotarubi_current_arrangement'
+const KEY_PLAYERS = 'hotarubi_players'
 
 // ============================================================
 // 型
@@ -182,6 +184,50 @@ export function saveArrangement(name: string, self: ArrangementCard[], enemy: Ar
 
 export function deleteArrangement(id: string): void {
   save(KEY_ARRANGEMENTS, loadArrangements().filter(a => a.id !== id))
+}
+
+// ============================================================
+// 作業中の札配置
+// 名前をつけた保存とは別に、いま盤面に並んでいる状態を常に保存しておき、
+// 次に開いたときそのまま続きから始められるようにする。
+// ============================================================
+export interface CurrentArrangement {
+  self: ArrangementCard[]
+  enemy: ArrangementCard[]
+}
+
+export function loadCurrentArrangement(): CurrentArrangement {
+  const raw = load<Partial<CurrentArrangement>>(KEY_CURRENT_ARR)
+  return {
+    self: Array.isArray(raw?.self) ? raw!.self! : [],
+    enemy: Array.isArray(raw?.enemy) ? raw!.enemy! : [],
+  }
+}
+
+export function saveCurrentArrangement(a: CurrentArrangement): void {
+  save(KEY_CURRENT_ARR, a)
+}
+
+// ============================================================
+// プレイヤー
+// SQLite はメモリDBに落ちて再読み込みで消えるため、localStorage に持つ。
+// ============================================================
+export interface StoredPlayer {
+  id: number
+  name: string
+  rank: number
+  gender?: 'male' | 'female' | 'other'
+  age?: number
+  height_cm?: number
+}
+
+export function loadPlayers(): StoredPlayer[] {
+  const raw = load<StoredPlayer[]>(KEY_PLAYERS)
+  return Array.isArray(raw) ? raw : []
+}
+
+export function savePlayers(list: StoredPlayer[]): void {
+  save(KEY_PLAYERS, list)
 }
 
 // ============================================================

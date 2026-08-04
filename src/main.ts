@@ -9,7 +9,7 @@
 
 import { initDB } from './db'
 import { loadPoems } from './data'
-import { initCardGrid, setModalOpener, broadcastArrangement } from './card-grid'
+import { initCardGrid, setModalOpener, broadcastArrangement, restoreCurrentArrangement } from './card-grid'
 import { initReading, setSessionType } from './audio'
 import { initCalibration, openProjectionWindow, broadcastCalibration, setCalibrationMode } from './calibration'
 import { initHighlightPanel, broadcastHighlightConfig } from './settings'
@@ -313,6 +313,10 @@ async function boot(): Promise<void> {
 
     initSession()
     setModalOpener(openCardModal)
+
+    // 前回の作業中の配置を読み戻す。札配置タブを開く前でも
+    // 投影と投影調整のプレビューに反映されるよう、ここで復元する。
+    restoreCurrentArrangement()
 
     document.querySelectorAll<HTMLElement>('.tab-btn').forEach(btn => {
       btn.addEventListener('click', () => switchTab(btn.dataset.tab as Tab))

@@ -70,6 +70,7 @@ npm run preview  # dist をプレビュー（COOP/COEP は preview にも効く�
 - **`@sqlite.org/sqlite-wasm` + OPFS。** Cross-Origin Isolation（COOP/COEP）が必須で、`vite.config.ts` の `server.headers` で設定済み。ヘッダが無い環境ではメモリ DB にフォールバックし、リロードで計測データが消えます。
 - **`@mediapipe/tasks-vision`。** WASM とモデル（`pose_landmarker_lite`）を CDN から取得するため、姿勢推定にはインターネット接続が必要です。
 - **状態はモジュールスコープの変数で持つ。** グローバルなストアや状態管理ライブラリはありません（`_grid`, `_state`, `_calibration` など）。
+- **UI の状態は localStorage、計測ログは SQLite。** 投影調整・札配置・札セット・ハイライト設定・読む札・プレイヤーは `store.ts` 経由で localStorage に保存し、起動時に自動で読み戻します。SQLite（`db.ts`）は `reading_log` と `posture_frames` の記録用ですが、下の「既知の未接続」4 のとおり現状はメモリDBに落ちています。
 
 ## アーキテクチャ
 
@@ -154,7 +155,8 @@ audio.ts (ステートマシン)
 | `calibration.ts` | 投影調整 UI（四隅・行エッジのドラッグ） |
 | `posture.ts` | MediaPipe Pose、カメラ制御、骨格キャプチャと可視化 |
 | `player.ts` | プレイヤー CRUD UI |
-| `settings.ts` | 設定プロファイル CRUD UI、アクティブ設定の配信 |
+| `settings.ts` | ハイライト設定パネル（競技タブ）と投影への配信 |
+| `store.ts` | localStorage 永続化（投影調整・札配置・札セット・ハイライト・読む札・プレイヤー） |
 
 ## 既知の未接続・実装の穴
 
@@ -167,19 +169,13 @@ audio.ts (ステートマシン)
 2. **`sessions.has_highlight` が常に 1 で固定。**
    `session.ts` にリテラルで `has_highlight: 1` と書かれており、ハイライト無し条件を記録する手段がありません。RQ1 の比較条件そのものなので、条件切り替えを実装するときはここと操作 UI の両方が必要です。
 
-3. **キャリブレーションが永続化されていない。**
-   `settings` テーブルに `calibration` 列があり `calibration.ts` は `db` を import していますが、実際には使っていません。`initCalibration()` は `_defaultCalibration()` で初期化するだけなので、ページを再読み込みするたびに投影調整をやり直すことになります。
-
-4. **保存した配置を復元できない。**
-   `card-grid.ts` の `setArrangement()` は export されていますが呼び出し元がありません。`arrangements` テーブルには保存されていく一方です。
-
-5. **シャッフルにバイアスがある。**
+3. **シャッフルにバイアスがある。**
    読み順（`audio.ts`）と配置（`card-grid.ts`）の両方で `.sort(() => Math.random() - 0.5)` を使っています。一様分布ではないので、順序のランダム性が結果に効く分析をするなら Fisher-Yates に置き換えてください。
 
-6. **計測データが永続化されていない（重要）。**
+4. **計測データが永続化されていない（重要）。**
    `db.ts` はメインスレッドで `sqlite3.oo1.OpfsDb` を作ろうとしますが、OPFS の VFS は `Atomics.wait()` を使うためワーカー内でしか動きません。結果として毎回メモリ DB にフォールバックし、リロードで全ての記録が消えます。実際に計測に使う前に `sqlite3Worker1Promiser` 経由へ移す必要があります。**その際 `db` の全メソッドが非同期になるため、`player.ts` / `settings.ts` / `session.ts` / `posture.ts` の呼び出し側もまとめて直すことになります。**
 
-7. **動作開始点の抽出は未実装。**
+5. **動作開始点の抽出は未実装。**
    `posture_frames` は記録されますが、そこから動作開始タイミングを取り出す処理はまだありません。上の「評価指標」の方針に沿った実装はこれからです。
 
 ## 過去に踏んだ罠

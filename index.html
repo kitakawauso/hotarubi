@@ -223,7 +223,14 @@
         color: var(--text); border-radius: 6px; font-family: inherit; font-size: 13px;
       }
       #modal-search-input:focus { outline: none; border-color: var(--accent); }
-      #modal-grid { display: flex; flex-wrap: wrap; gap: 5px; }
+      #modal-grid { display: flex; flex-direction: column; gap: 9px; }
+      .modal-group { display: flex; align-items: flex-start; gap: 8px; }
+      .modal-group-head {
+        flex-shrink: 0; width: 22px; text-align: center;
+        font-size: 15px; color: var(--accent2);
+        border-right: 1px solid var(--border); padding-right: 6px; line-height: 1.6;
+      }
+      .modal-group-cards { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
       .modal-card-btn {
         padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em;
         min-width: 40px; text-align: center;

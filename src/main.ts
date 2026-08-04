@@ -84,6 +84,85 @@ export interface ModalCardOption {
   label?: string
 }
 
+// 決まり字の1文字目でまとめるときの並び順（一字決まりから順の慣用順）
+const KIMARI_HEADS = 'むすめふさほせうつしもゆいちひきはやよかみたこおわなあ'.split('')
+
+/**
+ * 決まり字の1文字目ごとにグループ化して描画する。
+ * 単一選択・複数選択のどちらのモーダルでも同じ見た目にする。
+ */
+function _renderGrouped(
+  grid: HTMLElement,
+  options: ModalCardOption[],
+  makeButton: (opt: ModalCardOption) => HTMLElement
+): void {
+  grid.innerHTML = ''
+  if (options.length === 0) {
+    grid.innerHTML = '<span style="color:var(--text3);font-size:12px;">該当なし</span>'
+    return
+  }
+
+  const byHead = new Map<string, ModalCardOption[]>()
+  for (const o of options) {
+    const head = o.kimari.charAt(0) || '—'
+    if (!byHead.has(head)) byHead.set(head, [])
+    byHead.get(head)!.push(o)
+  }
+
+  // 慣用順で並べ、そこに無い頭文字は後ろに回す
+  const heads = [
+    ...KIMARI_HEADS.filter(h => byHead.has(h)),
+    ...[...byHead.keys()].filter(h => !KIMARI_HEADS.includes(h)),
+  ]
+
+  for (const head of heads) {
+    const section = document.createElement('div')
+    section.className = 'modal-group'
+
+    const title = document.createElement('div')
+    title.className = 'modal-group-head'
+    title.textContent = head
+    section.appendChild(title)
+
+    const cards = document.createElement('div')
+    cards.className = 'modal-group-cards'
+    for (const o of byHead.get(head)!.sort((a, b) => a.poem_id - b.poem_id)) {
+      cards.appendChild(makeButton(o))
+    }
+    section.appendChild(cards)
+    grid.appendChild(section)
+  }
+}
+
+/**
+ * 検索文字列に対して「これ1枚」と言い切れる札を返す。
+ * 決まり字ちょうど・札番号・決まり字より長く打った場合・打ちかけの
+ * いずれでも1枚に決まれば拾う。
+ */
+function _uniqueMatch(options: ModalCardOption[], query: string): ModalCardOption | null {
+  const q = query.trim()
+  if (!q) return null
+
+  const exact = options.filter(o => o.kimari === q)
+  if (exact.length === 1) return exact[0]
+
+  const byId = options.filter(o => String(o.poem_id) === q)
+  if (byId.length === 1) return byId[0]
+
+  // 決まり字より長く打たれた場合。一番長く一致する決まり字の札を採る
+  // （「ちぎりお」なら「ち」ではなく「ちぎりお」の札）。
+  const covered = options.filter(o => o.kimari.length > 0 && q.startsWith(o.kimari))
+  if (covered.length > 0) {
+    const maxLen = Math.max(...covered.map(o => o.kimari.length))
+    const longest = covered.filter(o => o.kimari.length === maxLen)
+    if (longest.length === 1) return longest[0]
+  }
+
+  // 打ちかけでも候補が1枚に絞れていれば拾う
+  const prefix = options.filter(o => o.kimari.startsWith(q))
+  return prefix.length === 1 ? prefix[0] : null
+}
+
 export function openCardModal(
   title: string,
   options: ModalCardOption[],
@@ -97,27 +176,29 @@ export function openCardModal(
   modalTitle.textContent = title
   searchInput.value = ''
 
-  const render = (filter: string) => {
-    grid.innerHTML = ''
-    const filtered = filter
-      ? options.filter(o => o.kimari.startsWith(filter) || o.label?.includes(filter))
-      : options
+  const filterOf = (f: string) => f
+    ? options.filter(o => o.kimari.startsWith(f) || o.label?.includes(f) || String(o.poem_id) === f)
+    : options
 
-    for (const opt of filtered) {
+  const render = (filter: string) => {
+    _renderGrouped(grid, filterOf(filter), opt => {
       const btn = document.createElement('button')
       btn.className = 'modal-card-btn'
       btn.textContent = opt.label ?? opt.kimari
       btn.title = `${opt.poem_id}番: ${opt.kimari}`
       btn.onclick = () => { closeModal(); onSelect(opt.poem_id) }
-      grid.appendChild(btn)
-    }
-    if (filtered.length === 0) {
-      grid.innerHTML = '<span style="color:var(--text3);font-size:12px;">該当なし</span>'
-    }
+      return btn
+    })
   }
 
   render('')
   searchInput.oninput = () => render(searchInput.value.trim())
+  searchInput.onkeydown = e => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const hit = _uniqueMatch(options, searchInput.value)
+    if (hit) { closeModal(); onSelect(hit.poem_id) }
+  }
   overlay.classList.add('visible')
   searchInput.focus()
 }
@@ -157,11 +238,10 @@ export function openCardMultiSelect(
       ? options.filter(o => o.kimari.startsWith(filter) || o.label?.includes(filter) || String(o.poem_id) === filter)
       : options
 
-    grid.innerHTML = ''
-    for (const opt of visible) {
+    _renderGrouped(grid, visible, opt => {
       const btn = document.createElement('button')
       btn.className = 'modal-card-btn' + (selected.has(opt.poem_id) ? ' selected' : '')
-      btn.textContent = `${opt.poem_id}. ${opt.kimari}`
+      btn.textContent = opt.kimari
       btn.title = `${opt.poem_id}番: ${opt.kimari}`
       btn.onclick = () => {
         if (selected.has(opt.poem_id)) selected.delete(opt.poem_id)
@@ -169,16 +249,26 @@ export function openCardMultiSelect(
         btn.classList.toggle('selected', selected.has(opt.poem_id))
         syncCount()
       }
-      grid.appendChild(btn)
-    }
-    if (visible.length === 0) {
-      grid.innerHTML = '<span style="color:var(--text3);font-size:12px;">該当なし</span>'
-    }
+      return btn
+    })
   }
 
   render('')
   syncCount()
   searchInput.oninput = () => render(searchInput.value.trim())
+
+  // 決まり字を打って Enter で1枚だけトグルする
+  searchInput.onkeydown = e => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    const hit = _uniqueMatch(options, searchInput.value)
+    if (!hit) return
+    if (selected.has(hit.poem_id)) selected.delete(hit.poem_id)
+    else selected.add(hit.poem_id)
+    searchInput.value = ''
+    render('')
+    syncCount()
+  }
 
   document.getElementById('modal-select-all')!.onclick = () => {
     for (const o of visible) selected.add(o.poem_id)

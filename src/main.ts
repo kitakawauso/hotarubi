@@ -20,7 +20,7 @@ import { initSession } from './session'
 // ============================================================
 // タブルーター
 // ============================================================
-const TABS = ['calibration', 'arrange', 'play', 'players'] as const
+const TABS = ['calibration', 'camera', 'play'] as const
 type Tab = typeof TABS[number]
 
 let _currentTab: Tab = 'calibration'
@@ -55,10 +55,11 @@ function initTabOnce(tab: Tab): void {
       }
       break
 
-    case 'arrange':
-      if (!_initialized.has('arrange')) {
-        _initialized.add('arrange')
-        initCardGrid('#card-grid-container', '#arrange-toolbar')
+    case 'camera':
+      if (!_initialized.has('camera')) {
+        _initialized.add('camera')
+        initPlayers('#players-ui')
+        initPosture('#camera-slot')
       }
       break
 
@@ -66,16 +67,9 @@ function initTabOnce(tab: Tab): void {
       if (!_initialized.has('play')) {
         _initialized.add('play')
         setSessionType('competitive')
+        initCardGrid('#card-grid-container', '#arrange-toolbar')
         initReading('#play-reading-slot')
         initHighlightPanel('#play-highlight-slot')
-        initPosture('#play-posture-slot')
-      }
-      break
-
-    case 'players':
-      if (!_initialized.has('players')) {
-        _initialized.add('players')
-        initPlayers('#players-ui')
       }
       break
   }

@@ -11,6 +11,7 @@ const KEY_CALIBRATION = 'hotarubi_calibration'
 const KEY_ARRANGEMENTS = 'hotarubi_arrangements'
 const KEY_HIGHLIGHT = 'hotarubi_highlight'
 const KEY_READSET = 'hotarubi_readset'
+const KEY_CARDSET = 'hotarubi_cardset'
 
 // ============================================================
 // 型
@@ -221,4 +222,25 @@ export function loadReadSet(): ReadSet {
 
 export function saveReadSet(r: ReadSet): void {
   save(KEY_READSET, r)
+}
+
+// ============================================================
+// 札セット（配置に使う札の絞り込み）
+// 札番号の1の位か十の位を選び、0〜9のうち5つの数字で50枚に絞る。
+// ============================================================
+export interface CardSet {
+  place: 'ones' | 'tens'
+  digits: number[]
+}
+
+export function loadCardSet(): CardSet {
+  const raw = load<Partial<CardSet>>(KEY_CARDSET)
+  return {
+    place: raw?.place === 'tens' ? 'tens' : 'ones',
+    digits: Array.isArray(raw?.digits) ? raw!.digits!.slice(0, 5) : [],
+  }
+}
+
+export function saveCardSet(s: CardSet): void {
+  save(KEY_CARDSET, s)
 }

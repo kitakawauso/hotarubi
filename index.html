@@ -231,6 +231,15 @@
         border-right: 1px solid var(--border); padding-right: 6px; line-height: 1.6;
       }
       .modal-group-cards { display: flex; flex-wrap: wrap; gap: 4px; flex: 1; }
+
+      /* 札セットの数字ボタン */
+      .set-digit {
+        width: 30px; padding: 4px 0; font-size: 13px; text-align: center;
+      }
+      .set-digit.selected {
+        background: linear-gradient(135deg, #8b4a00, #b86000);
+        border-color: var(--accent); color: #f5e8c0;
+      }
       .modal-card-btn {
         padding: 5px 8px; font-size: 11px; letter-spacing: 0.04em;
         min-width: 40px; text-align: center;

@@ -6,6 +6,7 @@ import { getPoems, cardImagePath } from './data'
 import { broadcastAll } from './projection-render'
 import {
   loadArrangements, saveArrangement, deleteArrangement,
+  loadCardSet, saveCardSet,
   type ArrangementCard, type SavedArrangement,
 } from './store'
 
@@ -26,6 +27,11 @@ let _grid: Slot[][][] = [
 
 // 札セット: null = 全100枚、Set = 使用する poem_id の集合
 let _activeSet: Set<number> | null = null
+
+// 札セットの指定内容（localStorage から復元する）
+const _savedCardSet = loadCardSet()
+let _setPlace: 'ones' | 'tens' = _savedCardSet.place
+const _setDigits = new Set<number>(_savedCardSet.digits)
 
 type ChangeHandler = () => void
 const _changeHandlers: ChangeHandler[] = []
@@ -399,25 +405,25 @@ function _buildToolbar(toolbar: HTMLElement): void {
       <span style="color:var(--text2);">現在: <strong id="set-current-label">全100枚</strong></span>
       <button id="set-clear" style="font-size:11px;padding:3px 8px;">クリア</button>
     </div>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;">
-      <div>
-        <div style="color:var(--text3);margin-bottom:3px;">1の位で指定（5つ選択）:</div>
-        <select multiple id="set-1s" size="5" style="width:70px;">
-          ${[0,1,2,3,4,5,6,7,8,9].map(d => `<option value="${d}">${d}</option>`).join('')}
-        </select>
-      </div>
-      <div>
-        <div style="color:var(--text3);margin-bottom:3px;">10の位で指定（5つ選択）:</div>
-        <select multiple id="set-10s" size="5" style="width:70px;">
-          ${[0,1,2,3,4,5,6,7,8,9].map(d => `<option value="${d}">${d}</option>`).join('')}
-        </select>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:4px;justify-content:flex-end;padding-bottom:4px;">
-        <button id="set-apply">適用</button>
-      </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="color:var(--text3);">どの桁で分ける:</span>
+      <label style="display:flex;align-items:center;gap:4px;">
+        <input type="radio" name="set-place" value="ones" checked> 1の位
+      </label>
+      <label style="display:flex;align-items:center;gap:4px;">
+        <input type="radio" name="set-place" value="tens"> 十の位
+      </label>
     </div>
-    <p style="font-size:11px;color:var(--text3);margin:4px 0 0;">
-      ※1の位と10の位は排他。先に選択されている方を優先。未選択の場合は全100枚。
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+      <span style="color:var(--text3);">数字を5つ:</span>
+      <div id="set-digits" style="display:flex;gap:4px;flex-wrap:wrap;">
+        ${[0,1,2,3,4,5,6,7,8,9].map(d => `<button type="button" class="set-digit" data-d="${d}">${d}</button>`).join('')}
+      </div>
+      <span id="set-digit-count" style="color:var(--text2);"></span>
+      <button id="set-apply" class="primary">適用</button>
+    </div>
+    <p style="font-size:11px;color:var(--text3);margin:6px 0 0;">
+      ※ 選んだ数字の札だけを使います（5つで50枚）。未選択なら全100枚。
     </p>
   `
   toolbar.insertAdjacentElement('afterend', setPanel)
@@ -430,27 +436,60 @@ function _buildToolbar(toolbar: HTMLElement): void {
     setPanel.style.display = setPanel.style.display === 'none' ? '' : 'none'
   })
 
+  // --- 数字ボタン（最大5つまでトグル）---
+  const MAX_DIGITS = 5
+  const digitBtns = [...setPanel.querySelectorAll<HTMLButtonElement>('.set-digit')]
+  const countEl = setPanel.querySelector<HTMLElement>('#set-digit-count')!
+  const placeOf = () =>
+    (setPanel.querySelector('input[name="set-place"]:checked') as HTMLInputElement).value as 'ones' | 'tens'
+
+  const syncDigits = () => {
+    const n = _setDigits.size
+    countEl.textContent = `${n} / ${MAX_DIGITS}`
+    for (const b of digitBtns) {
+      const d = parseInt(b.dataset.d!)
+      const on = _setDigits.has(d)
+      b.classList.toggle('selected', on)
+      // 5つ選んだら未選択のボタンは押せなくする
+      b.disabled = !on && n >= MAX_DIGITS
+    }
+  }
+
+  for (const b of digitBtns) {
+    b.addEventListener('click', () => {
+      const d = parseInt(b.dataset.d!)
+      if (_setDigits.has(d)) _setDigits.delete(d)
+      else if (_setDigits.size < MAX_DIGITS) _setDigits.add(d)
+      syncDigits()
+    })
+  }
+
+  setPanel.querySelectorAll('input[name="set-place"]').forEach(r =>
+    r.addEventListener('change', () => { _setPlace = placeOf(); syncDigits() })
+  )
+
   setPanel.querySelector('#set-clear')!.addEventListener('click', () => {
     _activeSet = null
+    _setDigits.clear()
+    syncDigits()
     ;(setPanel.querySelector('#set-current-label') as HTMLElement).textContent = '全100枚'
     updateSetBtn('全100枚')
-    ;(setPanel.querySelector('#set-1s') as HTMLSelectElement).selectedIndex = -1
-    ;(setPanel.querySelector('#set-10s') as HTMLSelectElement).selectedIndex = -1
+    saveCardSet({ place: _setPlace, digits: [] })
   })
 
   setPanel.querySelector('#set-apply')!.addEventListener('click', () => {
-    const ones = Array.from((setPanel.querySelector('#set-1s') as HTMLSelectElement).selectedOptions).map(o => parseInt(o.value))
-    const tens = Array.from((setPanel.querySelector('#set-10s') as HTMLSelectElement).selectedOptions).map(o => parseInt(o.value))
+    _setPlace = placeOf()
+    const digits = [..._setDigits].sort((a, b) => a - b)
     const poems = getPoems()
 
     let ids: number[]
     let label: string
-    if (ones.length > 0) {
-      ids = poems.filter(p => ones.includes(p.id % 10)).map(p => p.id)
-      label = `1の位:${ones.join(',')} (${ids.length}枚)`
-    } else if (tens.length > 0) {
-      ids = poems.filter(p => tens.includes(Math.floor((p.id - 1) / 10))).map(p => p.id)
-      label = `10の位:${tens.join(',')} (${ids.length}枚)`
+    if (digits.length > 0) {
+      // 1の位: 100番は 0 扱い / 十の位: 1〜10 が 0、91〜100 が 9
+      ids = poems
+        .filter(p => digits.includes(_setPlace === 'ones' ? p.id % 10 : Math.floor((p.id - 1) / 10)))
+        .map(p => p.id)
+      label = `${_setPlace === 'ones' ? '1の位' : '十の位'}:${digits.join(',')} (${ids.length}枚)`
     } else {
       ids = poems.map(p => p.id)
       label = '全100枚'
@@ -459,7 +498,13 @@ function _buildToolbar(toolbar: HTMLElement): void {
     _activeSet = ids.length < 100 ? new Set(ids) : null
     ;(setPanel.querySelector('#set-current-label') as HTMLElement).textContent = label
     updateSetBtn(label)
+    saveCardSet({ place: _setPlace, digits })
   })
+
+  // 保存済みの札セットを復元
+  ;(setPanel.querySelector(`input[name="set-place"][value="${_setPlace}"]`) as HTMLInputElement).checked = true
+  syncDigits()
+  if (_setDigits.size > 0) (setPanel.querySelector('#set-apply') as HTMLButtonElement).click()
 
   toolbar.querySelector('#arrange-pattern-a')!.addEventListener('click', () => applyArrangePattern('A'))
   toolbar.querySelector('#arrange-pattern-b')!.addEventListener('click', () => applyArrangePattern('B'))

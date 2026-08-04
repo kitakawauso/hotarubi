@@ -14,6 +14,8 @@ const KEY_READSET = 'hotarubi_readset'
 const KEY_CARDSET = 'hotarubi_cardset'
 const KEY_CURRENT_ARR = 'hotarubi_current_arrangement'
 const KEY_PLAYERS = 'hotarubi_players'
+const KEY_CALIB_HISTORY = 'hotarubi_calibration_history'
+const KEY_HL_HISTORY = 'hotarubi_highlight_history'
 
 // ============================================================
 // 型
@@ -37,14 +39,6 @@ export interface ArrangementCard {
   poem_id: number
   row: number  // 0-2
   col: number  // 0-15
-}
-
-export interface SavedArrangement {
-  id: string
-  name: string
-  self: ArrangementCard[]
-  enemy: ArrangementCard[]
-  updatedAt: string
 }
 
 /** ハイライトの見せ方。競技タブからリアルタイムに変更する。 */
@@ -157,33 +151,109 @@ export function saveCalibration(c: Calibration): void {
 }
 
 // ============================================================
-// 札配置（名前をつけて複数保存）
+// 保存履歴（共通）
+//
+// 「保存」を押すたびに日時つきで1件積む。上書きはしない。
+// あとから一覧で選んで読み込める。件数は HISTORY_MAX で頭打ちにし、
+// 古いものから捨てる。
 // ============================================================
-export function loadArrangements(): SavedArrangement[] {
-  const raw = load<SavedArrangement[]>(KEY_ARRANGEMENTS)
-  return Array.isArray(raw) ? raw : []
+const HISTORY_MAX = 50
+
+export interface HistoryEntry<T> {
+  id: string
+  /** ISO 文字列 */
+  savedAt: string
+  /** 任意の名前。空なら日時だけで区別する */
+  label: string
+  data: T
 }
 
-export function saveArrangement(name: string, self: ArrangementCard[], enemy: ArrangementCard[]): SavedArrangement {
-  const list = loadArrangements()
-  const now = new Date().toISOString()
-  const existing = list.find(a => a.name === name)
-  let saved: SavedArrangement
-  if (existing) {
-    existing.self = self
-    existing.enemy = enemy
-    existing.updatedAt = now
-    saved = existing
-  } else {
-    saved = { id: `arr_${Date.now()}`, name, self, enemy, updatedAt: now }
-    list.push(saved)
+function loadHistory<T>(key: string): HistoryEntry<T>[] {
+  const raw = load<HistoryEntry<T>[]>(key)
+  if (!Array.isArray(raw)) return []
+  // 新しいものが先頭
+  return raw.filter(e => e && typeof e.id === 'string')
+}
+
+function pushHistory<T>(key: string, data: T, label: string): HistoryEntry<T> {
+  const entry: HistoryEntry<T> = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    savedAt: new Date().toISOString(),
+    label: label.trim(),
+    data,
   }
-  save(KEY_ARRANGEMENTS, list)
-  return saved
+  const list = [entry, ...loadHistory<T>(key)].slice(0, HISTORY_MAX)
+  save(key, list)
+  return entry
+}
+
+function removeHistory(key: string, id: string): void {
+  save(key, loadHistory(key).filter(e => e.id !== id))
+}
+
+/** 一覧に出す表示名。「7/31 14:23 名前」の形。 */
+export function formatHistoryLabel(e: HistoryEntry<unknown>): string {
+  const d = new Date(e.savedAt)
+  const stamp = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return e.label ? `${stamp}  ${e.label}` : stamp
+}
+
+// ============================================================
+// 札配置の履歴
+// ============================================================
+export function loadArrangements(): HistoryEntry<CurrentArrangement>[] {
+  const list = loadHistory<CurrentArrangement>(KEY_ARRANGEMENTS)
+  if (list.length > 0) return list
+
+  // 旧形式（name/self/enemy を直に持つ配列）からの引き継ぎ
+  const old = load<Array<{ id?: string; name?: string; self?: ArrangementCard[]; enemy?: ArrangementCard[]; updatedAt?: string }>>(KEY_ARRANGEMENTS)
+  if (!Array.isArray(old) || old.length === 0 || !old[0]?.self) return []
+  const migrated: HistoryEntry<CurrentArrangement>[] = old.map((a, i) => ({
+    id: a.id ?? `mig_${i}`,
+    savedAt: a.updatedAt ?? new Date().toISOString(),
+    label: a.name ?? '',
+    data: { self: a.self ?? [], enemy: a.enemy ?? [] },
+  }))
+  save(KEY_ARRANGEMENTS, migrated)
+  return migrated
+}
+
+export function saveArrangement(label: string, self: ArrangementCard[], enemy: ArrangementCard[]) {
+  return pushHistory<CurrentArrangement>(KEY_ARRANGEMENTS, { self, enemy }, label)
 }
 
 export function deleteArrangement(id: string): void {
-  save(KEY_ARRANGEMENTS, loadArrangements().filter(a => a.id !== id))
+  removeHistory(KEY_ARRANGEMENTS, id)
+}
+
+// ============================================================
+// 投影調整の履歴
+// ============================================================
+export function loadCalibrationHistory(): HistoryEntry<Calibration>[] {
+  return loadHistory<Calibration>(KEY_CALIB_HISTORY)
+}
+
+export function pushCalibrationHistory(c: Calibration, label: string) {
+  return pushHistory<Calibration>(KEY_CALIB_HISTORY, c, label)
+}
+
+export function deleteCalibrationHistory(id: string): void {
+  removeHistory(KEY_CALIB_HISTORY, id)
+}
+
+// ============================================================
+// ハイライト設定の履歴
+// ============================================================
+export function loadHighlightHistory(): HistoryEntry<HighlightConfig>[] {
+  return loadHistory<HighlightConfig>(KEY_HL_HISTORY)
+}
+
+export function pushHighlightHistory(h: HighlightConfig, label: string) {
+  return pushHistory<HighlightConfig>(KEY_HL_HISTORY, h, label)
+}
+
+export function deleteHighlightHistory(id: string): void {
+  removeHistory(KEY_HL_HISTORY, id)
 }
 
 // ============================================================

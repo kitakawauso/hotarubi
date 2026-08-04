@@ -8,8 +8,9 @@ import {
   loadArrangements, saveArrangement, deleteArrangement,
   loadCardSet, saveCardSet,
   loadCurrentArrangement, saveCurrentArrangement,
-  type ArrangementCard, type SavedArrangement,
+  type ArrangementCard,
 } from './store'
+import { initHistoryPicker, showToast } from './main'
 
 export type { ArrangementCard }
 
@@ -403,11 +404,7 @@ function _buildToolbar(toolbar: HTMLElement): void {
     </label>
     <button id="arrange-set-btn">札セット: 全100枚</button>
     <span style="width:1px;height:22px;background:var(--border);margin:0 4px;"></span>
-    <input type="text" id="arrange-name" placeholder="配置名" style="width:120px;">
-    <button id="arrange-save" class="primary">保存</button>
-    <select id="arrange-saved" style="max-width:170px;"></select>
-    <button id="arrange-load">読込</button>
-    <button id="arrange-delete" style="color:#e06060;border-color:#e06060;">削除</button>
+    <span id="arrange-history"></span>
   `
 
   // 札セットパネル（トグル）
@@ -535,42 +532,25 @@ function _buildToolbar(toolbar: HTMLElement): void {
     _compactMode = (e.target as HTMLInputElement).checked
   })
 
-  // --- 名前をつけて保存 / 読込（localStorage） ---
-  const nameInput = toolbar.querySelector<HTMLInputElement>('#arrange-name')!
-  const savedSel  = toolbar.querySelector<HTMLSelectElement>('#arrange-saved')!
-
-  const refreshSaved = (selectId?: string) => {
-    const list = loadArrangements()
-    savedSel.innerHTML = list.length === 0
-      ? '<option value="">保存された配置なし</option>'
-      : list.map(a => `<option value="${a.id}">${a.name}（${a.self.length + a.enemy.length}枚）</option>`).join('')
-    if (selectId) savedSel.value = selectId
-  }
-
-  toolbar.querySelector('#arrange-save')!.addEventListener('click', () => {
-    const name = nameInput.value.trim()
-    if (!name) { alert('配置名を入力してください'); return }
-    const { self, enemy } = getArrangement()
-    if (self.length === 0 && enemy.length === 0) { alert('札が配置されていません'); return }
-    const saved = saveArrangement(name, self, enemy)
-    refreshSaved(saved.id)
+  // --- 保存履歴（「保存」を押したときだけ日時つきで1件積む）---
+  initHistoryPicker({
+    container: toolbar.querySelector<HTMLElement>('#arrange-history')!,
+    namePlaceholder: '配置名（任意）',
+    list: () => loadArrangements(),
+    onSave: label => {
+      const { self, enemy } = getArrangement()
+      if (self.length === 0 && enemy.length === 0) { alert('札が配置されていません'); return }
+      saveArrangement(label, self, enemy)
+      showToast(`札配置を保存しました（${self.length + enemy.length}枚）`)
+    },
+    onLoad: id => {
+      const hit = loadArrangements().find(e => e.id === id)
+      if (!hit) return
+      setArrangement(hit.data.self, hit.data.enemy)
+      showToast('札配置を読み込みました')
+    },
+    onDelete: id => deleteArrangement(id),
   })
-
-  toolbar.querySelector('#arrange-load')!.addEventListener('click', () => {
-    const target = loadArrangements().find((a: SavedArrangement) => a.id === savedSel.value)
-    if (!target) return
-    setArrangement(target.self, target.enemy)
-    nameInput.value = target.name
-  })
-
-  toolbar.querySelector('#arrange-delete')!.addEventListener('click', () => {
-    const target = loadArrangements().find((a: SavedArrangement) => a.id === savedSel.value)
-    if (!target || !confirm(`「${target.name}」を削除しますか？`)) return
-    deleteArrangement(target.id)
-    refreshSaved()
-  })
-
-  refreshSaved()
 }
 
 // ============================================================

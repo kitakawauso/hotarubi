@@ -7,8 +7,13 @@
 // されるので、投影を見ながら追い込める。
 // ============================================================
 
-import { getHighlight, setHighlight, DEFAULT_HIGHLIGHT, type HighlightConfig } from './store'
+import {
+  getHighlight, setHighlight, DEFAULT_HIGHLIGHT,
+  loadHighlightHistory, pushHighlightHistory, deleteHighlightHistory,
+  type HighlightConfig,
+} from './store'
 import { broadcastPartial } from './projection-render'
+import { initHistoryPicker, showToast } from './main'
 
 // ============================================================
 // 変更の反映
@@ -140,6 +145,9 @@ export function initHighlightPanel(containerSelector: string): void {
       <span class="hl-val" id="hl-autoplay-val">${cfg.autoPlayIntervalSec}秒</span>
     </div>
 
+    <p class="hl-group">保存</p>
+    <div id="hl-history"></div>
+
     <div style="margin-top:14px;">
       <button id="hl-reset" style="font-size:11px;">既定値に戻す</button>
     </div>
@@ -237,6 +245,25 @@ export function initHighlightPanel(containerSelector: string): void {
     const v = parseFloat(interval.value)
     _update({ autoPlayIntervalSec: v })
     intervalVal.textContent = `${v}秒`
+  })
+
+  // --- 保存履歴（実験条件をまるごと残しておくため）---
+  initHistoryPicker({
+    container: q<HTMLElement>('#hl-history'),
+    namePlaceholder: '条件名（任意）',
+    list: () => loadHighlightHistory(),
+    onSave: label => {
+      pushHighlightHistory(getHighlight(), label)
+      showToast('ハイライト設定を保存しました')
+    },
+    onLoad: id => {
+      const hit = loadHighlightHistory().find(e => e.id === id)
+      if (!hit) return
+      _update(hit.data)
+      initHighlightPanel(containerSelector)  // フォームを描き直す
+      showToast('ハイライト設定を読み込みました')
+    },
+    onDelete: id => deleteHighlightHistory(id),
   })
 
   // --- 既定値に戻す ---

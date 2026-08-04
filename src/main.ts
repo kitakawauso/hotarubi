@@ -16,6 +16,7 @@ import { initHighlightPanel, broadcastHighlightConfig } from './settings'
 import { initPosture } from './posture'
 import { initPlayers } from './player'
 import { initSession } from './session'
+import { formatHistoryLabel, type HistoryEntry } from './store'
 
 // ============================================================
 // タブルーター
@@ -288,6 +289,74 @@ export function openCardMultiSelect(
   footer.classList.add('visible')
   overlay.classList.add('visible')
   searchInput.focus()
+}
+
+// ============================================================
+// 保存履歴のピッカー
+// 投影調整・札配置・ハイライト設定で同じ見た目にする。
+//   [名前(任意)] [保存] [履歴 select] [読込] [削除]
+// 「保存」を押したときだけ履歴が1件増える（上書きはしない）。
+// ============================================================
+export interface HistoryPickerOptions {
+  /** 差し込み先。ここに直接 UI を append する */
+  container: HTMLElement
+  /** 新しい順の履歴 */
+  list: () => Array<HistoryEntry<unknown>>
+  onSave: (label: string) => void
+  onLoad: (id: string) => void
+  onDelete: (id: string) => void
+  /** 名前入力の placeholder */
+  namePlaceholder?: string
+}
+
+export function initHistoryPicker(opts: HistoryPickerOptions): { refresh: () => void } {
+  const wrap = document.createElement('div')
+  wrap.className = 'history-picker'
+  wrap.innerHTML = `
+    <input type="text" class="hp-name" placeholder="${opts.namePlaceholder ?? '名前（任意）'}">
+    <button class="hp-save primary">保存</button>
+    <select class="hp-list"></select>
+    <button class="hp-load">読込</button>
+    <button class="hp-delete">削除</button>
+  `
+  opts.container.appendChild(wrap)
+
+  const nameInput = wrap.querySelector<HTMLInputElement>('.hp-name')!
+  const listSel   = wrap.querySelector<HTMLSelectElement>('.hp-list')!
+
+  const refresh = (selectId?: string) => {
+    const entries = opts.list()
+    listSel.innerHTML = entries.length === 0
+      ? '<option value="">保存なし</option>'
+      : entries.map(e => `<option value="${e.id}">${formatHistoryLabel(e)}</option>`).join('')
+    if (selectId) listSel.value = selectId
+    listSel.disabled = entries.length === 0
+  }
+
+  // 一覧を開くたびに読み直す（別のタブや別の経路で増えていることがある）
+  listSel.addEventListener('mousedown', () => refresh(listSel.value))
+
+  wrap.querySelector('.hp-save')!.addEventListener('click', () => {
+    opts.onSave(nameInput.value)
+    nameInput.value = ''
+    refresh()
+  })
+
+  wrap.querySelector('.hp-load')!.addEventListener('click', () => {
+    if (!listSel.value) return
+    opts.onLoad(listSel.value)
+  })
+
+  wrap.querySelector('.hp-delete')!.addEventListener('click', () => {
+    if (!listSel.value) return
+    const label = listSel.options[listSel.selectedIndex]?.textContent ?? ''
+    if (!confirm(`「${label.trim()}」を削除しますか？`)) return
+    opts.onDelete(listSel.value)
+    refresh()
+  })
+
+  refresh()
+  return { refresh: () => refresh() }
 }
 
 // ============================================================

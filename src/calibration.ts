@@ -12,9 +12,10 @@ import type { ProjectionState } from './projection-render'
 import { getArrangement, onArrangementChange } from './card-grid'
 import {
   loadCalibration, saveCalibration, defaultCalibration, getHighlight,
+  loadCalibrationHistory, pushCalibrationHistory, deleteCalibrationHistory,
   type Calibration, type NormPoint,
 } from './store'
-import { showToast } from './main'
+import { showToast, initHistoryPicker } from './main'
 
 // ============================================================
 // 状態
@@ -204,9 +205,9 @@ export function initCalibration(containerSelector: string): void {
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
         <button id="cal-warp" style="min-width:130px;">行ワープ: OFF</button>
-        <button id="cal-save" class="primary">保存</button>
         <button id="cal-reset" style="color:#e06060;border-color:#e06060;">リセット</button>
       </div>
+      <div id="cal-history"></div>
 
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
         <label style="display:flex;align-items:center;gap:8px;">
@@ -248,9 +249,25 @@ export function initCalibration(containerSelector: string): void {
     _apply()
   })
 
-  container.querySelector('#cal-save')!.addEventListener('click', () => {
-    saveCalibration(_cal)
-    showToast('投影調整を保存しました')
+  // 保存履歴（「保存」を押したときだけ日時つきで1件積む）
+  initHistoryPicker({
+    container: container.querySelector<HTMLElement>('#cal-history')!,
+    namePlaceholder: '会場名など（任意）',
+    list: () => loadCalibrationHistory(),
+    onSave: label => {
+      pushCalibrationHistory(_cal, label)
+      showToast('投影調整を保存しました')
+    },
+    onLoad: id => {
+      const hit = loadCalibrationHistory().find(e => e.id === id)
+      if (!hit) return
+      _cal = hit.data
+      syncWarpBtn()
+      syncGaps()
+      _apply()
+      showToast('投影調整を読み込みました')
+    },
+    onDelete: id => deleteCalibrationHistory(id),
   })
 
   container.querySelector('#cal-reset')!.addEventListener('click', () => {

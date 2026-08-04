@@ -71,6 +71,7 @@ npm run preview  # dist をプレビュー（COOP/COEP は preview にも効く�
 - **`@mediapipe/tasks-vision`。** WASM とモデル（`pose_landmarker_lite`）を CDN から取得するため、姿勢推定にはインターネット接続が必要です。
 - **状態はモジュールスコープの変数で持つ。** グローバルなストアや状態管理ライブラリはありません（`_grid`, `_state`, `_calibration` など）。
 - **UI の状態は localStorage、計測ログは SQLite。** 投影調整・札配置・札セット・ハイライト設定・読む札・プレイヤーは `store.ts` 経由で localStorage に保存し、起動時に自動で読み戻します。SQLite（`db.ts`）は `reading_log` と `posture_frames` の記録用ですが、下の「既知の未接続」4 のとおり現状はメモリDBに落ちています。
+- **「作業中の最新状態」と「保存履歴」は別物。** 前者は操作のたびに自動保存され、起動時に自動で復元されます。後者は利用者が「保存」を押したときだけ日時つきで1件積まれ（上書きしない、`HISTORY_MAX` 件で古いものから破棄）、一覧から選んで読み込みます。投影調整・札配置・ハイライト設定の3つが履歴を持ち、UI は `main.ts` の `initHistoryPicker()` で共通化しています。履歴を増やすときは `store.ts` の `pushHistory`/`loadHistory` を使ってください。
 
 ## アーキテクチャ
 

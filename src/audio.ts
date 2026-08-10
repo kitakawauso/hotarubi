@@ -116,22 +116,35 @@ function _pickNext(): void {
 // ============================================================
 // 決まり字
 // ============================================================
+/**
+ * 決まり字を計算する母集団 = まだ読まれていない札すべて。
+ *
+ * 実際の競技と同じく、場に無い空札も含める。選手はその札が空札かどうかを
+ * 読まれるまで判別できないので、空札が残っている間は決まり字は短くならない。
+ * 場の札だけを母集団にすると決まり字が実際より短く出てしまう。
+ *
+ * `_unread` は抽選済みの札を含まないので、いま読んでいる（読もうとしている）
+ * `_next` を足したものが「未読札全体」になる。
+ */
+function _remainingIds(): number[] {
+  const ids = new Set(_unread)
+  if (_next !== null) ids.add(_next)
+  return [...ids]
+}
+
 function _kimariFor(poemId: number): string {
   const poems = getPoems()
-  const cfg = getHighlight()
-  if (cfg.source === 'fixed') {
-    return poems.find(p => p.id === poemId)?.kimari_ji ?? ''
-  }
-  // 場に残っている札の中で一意に決まる最小プレフィックス
-  const field = getFieldPoemIds()
-  const basis = field.includes(poemId) ? field : [...field, poemId]
-  return computeEffectiveKimari(basis, poems).get(poemId)
-    ?? poems.find(p => p.id === poemId)?.kimari_ji ?? ''
+  const fallback = () => poems.find(p => p.id === poemId)?.kimari_ji ?? ''
+  if (getHighlight().source === 'fixed') return fallback()
+
+  const basis = _remainingIds()
+  if (!basis.includes(poemId)) basis.push(poemId)
+  return computeEffectiveKimari(basis, poems).get(poemId) ?? fallback()
 }
 
 function _effectiveKimariRecord(): Record<number, string> {
   const rec: Record<number, string> = {}
-  computeEffectiveKimari(getFieldPoemIds(), getPoems()).forEach((v, k) => { rec[k] = v })
+  computeEffectiveKimari(_remainingIds(), getPoems()).forEach((v, k) => { rec[k] = v })
   return rec
 }
 
@@ -156,6 +169,8 @@ function _scheduleHighlights(targetId: number): void {
   // 読まれた札自体が場に無いなら「その1枚だけ」を光らせようがない
   if (!onField && cfg.mode === 'target_only') return
 
+  // 決まり字は未読札全体（空札を含む）で計算する。段階の数もこれに従うので、
+  // 空札が多く残っているうちは段階が増え、絞り込みがゆっくりになる。
   const kimari = _kimariFor(targetId)
   const maxK = cfg.mode === 'target_only' ? 1 : Math.max(1, kimari.length)
 
@@ -169,7 +184,8 @@ function _scheduleHighlights(targetId: number): void {
         return
       }
 
-      // 決まり字プレフィックスに一致する場の札を集める。
+      // 決まり字プレフィックスに一致する「場の」札を集める。
+      // 母集団は未読札全体だが、光らせられるのは実際に場にある札だけ。
       // 2枚以上あるうちは候補色でまとめて光らせ、1枚に絞れたときだけ確定色にする
       // （早い段階で正解が分かってしまわないようにするため）。
       //

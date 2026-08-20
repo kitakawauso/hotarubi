@@ -259,6 +259,67 @@ export function applyArrangePattern(pattern: ArrangePattern, count = 25): void {
 let _dragSrc: { field: number; row: number; col: number } | null = null
 
 // ============================================================
+// 札と札の間への挿入
+// ============================================================
+
+/** ドロップ位置がマスのどこか。左右の端寄りなら「間」への挿入とみなす */
+type DropZone = 'insert-left' | 'insert-right' | 'swap'
+
+function _dropZone(e: DragEvent, el: HTMLElement): DropZone {
+  const rect = el.getBoundingClientRect()
+  const ratio = (e.clientX - rect.left) / rect.width
+  if (ratio < 0.3) return 'insert-left'
+  if (ratio > 0.7) return 'insert-right'
+  return 'swap'
+}
+
+function _clearInsertMarks(): void {
+  document.querySelectorAll('.grid-slot.insert-left, .grid-slot.insert-right')
+    .forEach(el => el.classList.remove('insert-left', 'insert-right'))
+}
+
+/**
+ * 段の境目 `boundary`（列 boundary-1 と boundary の間）に札を挿し込む。
+ *
+ * 押し出しは端寄せと同じ規則で、中心（列8）を境にした半分の中だけで詰める。
+ * 挿入位置が左半分なら左半分の札を左へ、右半分なら右半分の札を右へ
+ * 1枚ずつ押し出す。反対側の半分は動かさない。
+ * その半分に空きが無ければ、同じ半分の中で逆向きの押し出しを試す。
+ * どちらもできなければ挿入せず false を返す。
+ */
+function _insertAt(field: number, row: number, boundary: number, poemId: number): boolean {
+  const r = _grid[field][row]
+  const HALF = COLS / 2
+  const [lo, hi] = boundary <= HALF ? [0, HALF - 1] : [HALF, COLS - 1]
+
+  // 左へ押し出す: [k..boundary-2] を1つ左へずらし、boundary-1 を空ける
+  const pushLeft = (): boolean => {
+    for (let k = boundary - 1; k >= lo; k--) {
+      if (r[k] !== null) continue
+      for (let c = k; c <= boundary - 2; c++) r[c] = r[c + 1]
+      r[boundary - 1] = poemId
+      return true
+    }
+    return false
+  }
+
+  // 右へ押し出す: [boundary+1..k] を1つ右へずらし、boundary を空ける
+  const pushRight = (): boolean => {
+    for (let k = boundary; k <= hi; k++) {
+      if (r[k] !== null) continue
+      for (let c = k; c >= boundary + 1; c--) r[c] = r[c - 1]
+      r[boundary] = poemId
+      return true
+    }
+    return false
+  }
+
+  return boundary <= HALF
+    ? (pushLeft() || pushRight())
+    : (pushRight() || pushLeft())
+}
+
+// ============================================================
 // レンダリング
 // ============================================================
 let _container: HTMLElement | null = null
@@ -386,20 +447,48 @@ function _buildGrid(): HTMLElement {
           _dragSrc = { field: f, row: r, col: c }
           e.dataTransfer!.effectAllowed = 'move'
         })
-        slot.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer!.dropEffect = 'move' })
+        slot.addEventListener('dragover', e => {
+          e.preventDefault()
+          e.dataTransfer!.dropEffect = 'move'
+          if (!_dragSrc) return
+          // 落とす場所によって「入れ替え」か「間に挿入」かを示す
+          const zone = _dropZone(e, slot)
+          _clearInsertMarks()
+          if (zone !== 'swap') slot.classList.add(zone)
+        })
+        slot.addEventListener('dragleave', () => slot.classList.remove('insert-left', 'insert-right'))
+
         slot.addEventListener('drop', e => {
           e.preventDefault()
+          _clearInsertMarks()
           if (!_dragSrc) return
           const { field: sf, row: sr, col: sc } = _dragSrc
-          if (sf === f && sr === r && sc === c) return
-          const tmp = _grid[f][r][c]
-          _grid[f][r][c] = _grid[sf][sr][sc]
-          _grid[sf][sr][sc] = tmp
+          const zone = _dropZone(e, slot)
+
+          if (zone === 'swap') {
+            if (sf === f && sr === r && sc === c) return
+            const tmp = _grid[f][r][c]
+            _grid[f][r][c] = _grid[sf][sr][sc]
+            _grid[sf][sr][sc] = tmp
+          } else {
+            const poemId = _grid[sf][sr][sc]
+            if (poemId === null) return
+            const boundary = zone === 'insert-left' ? c : c + 1
+            // いったん元の位置を空けてから挿し込む。
+            // 同じ段の中での移動でも、空いたマスがそのまま詰め先になる。
+            _grid[sf][sr][sc] = null
+            if (!_insertAt(f, r, boundary, poemId)) {
+              _grid[sf][sr][sc] = poemId  // 押し出す余地が無ければ元に戻す
+              showToast('その半分に空きが無いため挿入できません')
+              return
+            }
+          }
+
           _dragSrc = null
           _notifyChange()
           _renderAll()
         })
-        slot.addEventListener('dragend', () => { _dragSrc = null })
+        slot.addEventListener('dragend', () => { _dragSrc = null; _clearInsertMarks() })
 
         grid.appendChild(slot)
       }
@@ -611,6 +700,21 @@ function _injectStyles(): void {
     .grid-slot.occupied { background: var(--bg3); cursor: grab; }
     .grid-slot.occupied:hover { border-color: var(--accent2); }
     .grid-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    /* ドラッグ中の挿入位置インジケータ（札と札の間に出る縦線） */
+    .grid-slot.insert-left::before,
+    .grid-slot.insert-right::after {
+      content: '';
+      position: absolute;
+      top: -2px; bottom: -2px;
+      width: 4px;
+      background: var(--accent2);
+      border-radius: 2px;
+      z-index: 5;
+      pointer-events: none;
+    }
+    .grid-slot.insert-left::before  { left: -3px; }
+    .grid-slot.insert-right::after  { right: -3px; }
     .grid-slot.enemy-field img { transform: rotate(180deg); }
     .slot-kimari {
       position: absolute;

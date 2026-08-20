@@ -41,20 +41,29 @@ type SliderDef = {
   hint?: string
 }
 
-const TIMING_SLIDERS: SliderDef[] = [
-  { key: 'silenceSec',      label: '間の長さ', min: 0,  max: 5,  step: 0.1,  unit: '秒',
+// タイミングは 0.01 秒単位で詰めたいので、スライダーではなく数値入力にする
+const TIMING_FIELDS: SliderDef[] = [
+  { key: 'silenceSec',      label: '間の長さ', min: 0,  max: 10,  step: 0.01, unit: '秒',
     hint: '下の句が終わってから次の札の上の句が始まるまで。読み上げそのものの速さが変わる' },
-  { key: 'leadSec',         label: '点灯オフセット', min: -2, max: 3, step: 0.05, unit: '秒',
+  { key: 'leadSec',         label: '点灯オフセット', min: -5, max: 5, step: 0.01, unit: '秒',
     hint: '上の句が始まる瞬間を0秒とした点灯時刻。マイナスで前倒しだが、間の長さより前には遡れない' },
-  { key: 'perCharSec',      label: '字数係数',   min: 0,  max: 1,  step: 0.05, unit: '秒/字',
+  { key: 'perCharSec',      label: '字数係数',   min: 0,  max: 2,  step: 0.01, unit: '秒/字',
     hint: '決まり字1文字あたりの遅延。段階的に絞り込むモードでのみ効く' },
 ]
 
 const APPEARANCE_SLIDERS: SliderDef[] = [
   { key: 'fillOpacity',  label: '塗り濃度', min: 0,   max: 1,  step: 0.05, unit: '' },
   { key: 'borderWidth',  label: '枠線太さ', min: 0,   max: 8,  step: 1,    unit: 'px' },
-  { key: 'offsetX',      label: 'ずれ補正 X', min: -80, max: 80, step: 1,  unit: 'px' },
-  { key: 'offsetY',      label: 'ずれ補正 Y', min: -80, max: 80, step: 1,  unit: 'px' },
+]
+
+// 光らせる長方形の大きさと位置。実際の札とのズレを詰めるために使う。
+const RECT_SLIDERS: SliderDef[] = [
+  { key: 'sizeScaleW', label: '幅',   min: 0.3, max: 2, step: 0.01, unit: '倍',
+    hint: '札1枚分の幅に対する倍率' },
+  { key: 'sizeScaleH', label: '高さ', min: 0.3, max: 2, step: 0.01, unit: '倍',
+    hint: '札1枚分の高さに対する倍率' },
+  { key: 'offsetX',    label: '位置 X', min: -80, max: 80, step: 1, unit: 'px' },
+  { key: 'offsetY',    label: '位置 Y', min: -80, max: 80, step: 1, unit: 'px' },
 ]
 
 function _sliderRow(def: SliderDef, cfg: HighlightConfig): string {
@@ -68,6 +77,18 @@ function _sliderRow(def: SliderDef, cfg: HighlightConfig): string {
   `
 }
 
+function _numberRow(def: SliderDef, cfg: HighlightConfig): string {
+  const v = cfg[def.key] as number
+  return `
+    <div class="hl-row">
+      <label title="${def.hint ?? ''}">${def.label}</label>
+      <input type="number" class="hl-num" data-key="${def.key}"
+             min="${def.min}" max="${def.max}" step="${def.step}" value="${v}">
+      <span class="hl-val">${def.unit}</span>
+    </div>
+  `
+}
+
 function _injectStyles(): void {
   if (document.getElementById('hl-panel-style')) return
   const style = document.createElement('style')
@@ -76,6 +97,7 @@ function _injectStyles(): void {
     .hl-row { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
     .hl-row label { min-width:78px; font-size:12px; }
     .hl-row input[type=range] { flex:1; min-width:80px; }
+    .hl-row .hl-num { width:80px; }
     .hl-val { font-size:11px; color:var(--text3); width:56px; text-align:right; }
     .hl-group { font-size:11px; color:var(--accent2); letter-spacing:0.12em;
                 border-bottom:1px solid var(--border); padding-bottom:4px; margin:12px 0 8px; }
@@ -123,7 +145,7 @@ export function initHighlightPanel(containerSelector: string): void {
       下の句 →〈間の長さ〉→ 上の句、と進みます。ハイライトは
       上の句開始から〈点灯オフセット〉秒後に点きます。
     </p>
-    <div id="hl-timing">${TIMING_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
+    <div id="hl-timing">${TIMING_FIELDS.map(d => _numberRow(d, cfg)).join('')}</div>
 
     <p class="hl-group">見た目</p>
     <div class="hl-row">
@@ -137,6 +159,9 @@ export function initHighlightPanel(containerSelector: string): void {
     </div>
     <div id="hl-appearance">${APPEARANCE_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
     <p id="hl-shape-note" style="font-size:11px;color:var(--text3);margin:2px 0 0;line-height:1.6;"></p>
+
+    <p class="hl-group">長方形の大きさ・位置</p>
+    <div id="hl-rect">${RECT_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
 
     <p class="hl-group">自動再生</p>
     <div class="hl-row">
@@ -155,14 +180,15 @@ export function initHighlightPanel(containerSelector: string): void {
 
   const q = <T extends HTMLElement>(sel: string) => container.querySelector<T>(sel)!
 
-  // --- スライダー（タイミング + 見た目をまとめて） ---
-  const allSliders = [...TIMING_SLIDERS, ...APPEARANCE_SLIDERS]
-  const unitOf = (key: string) => allSliders.find(d => d.key === key)?.unit ?? ''
+  // --- 数値入力とスライダーをまとめて処理 ---
+  const allFields = [...TIMING_FIELDS, ...APPEARANCE_SLIDERS, ...RECT_SLIDERS]
+  const unitOf = (key: string) => allFields.find(d => d.key === key)?.unit ?? ''
 
-  container.querySelectorAll<HTMLInputElement>('input[type=range][data-key]').forEach(input => {
+  container.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
     input.addEventListener('input', () => {
       const key = input.dataset.key as keyof HighlightConfig
       const v = parseFloat(input.value)
+      if (!Number.isFinite(v)) return  // 入力途中の空欄などは無視する
       _update({ [key]: v } as Partial<HighlightConfig>)
       const label = container.querySelector<HTMLElement>(`[data-val="${key}"]`)
       if (label) label.textContent = `${v}${unitOf(key)}`

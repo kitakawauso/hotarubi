@@ -136,6 +136,17 @@ function _renderGrouped(
 }
 
 /**
+ * 検索欄を確実に空にする。
+ * value を空にするだけでは IME の変換中バッファが残ることがあり、
+ * 次に開いたときに前の入力が出たままになる。いったんフォーカスを
+ * 外して変換を打ち切ってからクリアする。
+ */
+function _resetSearchInput(el: HTMLInputElement): void {
+  el.blur()
+  el.value = ''
+}
+
+/**
  * 検索文字列に対して「これ1枚」と言い切れる札を返す。
  * 決まり字ちょうど・札番号・決まり字より長く打った場合・打ちかけの
  * いずれでも1枚に決まれば拾う。
@@ -175,7 +186,7 @@ export function openCardModal(
   const searchInput = document.getElementById('modal-search-input') as HTMLInputElement
 
   modalTitle.textContent = title
-  searchInput.value = ''
+  _resetSearchInput(searchInput)
 
   const filterOf = (f: string) => f
     ? options.filter(o => o.kimari.startsWith(f) || o.label?.includes(f) || String(o.poem_id) === f)
@@ -207,6 +218,8 @@ export function openCardModal(
 export function closeModal(): void {
   document.getElementById('modal-overlay')!.classList.remove('visible')
   document.getElementById('modal-footer')!.classList.remove('visible')
+  // 閉じる時点でも空にしておき、次に開いたとき前の入力が残らないようにする
+  _resetSearchInput(document.getElementById('modal-search-input') as HTMLInputElement)
 }
 
 // ============================================================
@@ -230,7 +243,7 @@ export function openCardMultiSelect(
   let visible: ModalCardOption[] = options
 
   modalTitle.textContent = title
-  searchInput.value = ''
+  _resetSearchInput(searchInput)
 
   const syncCount = () => { countEl.textContent = `${selected.size} 枚 選択中` }
 
@@ -266,6 +279,7 @@ export function openCardMultiSelect(
     if (!hit) return
     if (selected.has(hit.poem_id)) selected.delete(hit.poem_id)
     else selected.add(hit.poem_id)
+    // ここでは続けて次の札を打てるようにフォーカスを保つ（blur しない）
     searchInput.value = ''
     render('')
     syncCount()

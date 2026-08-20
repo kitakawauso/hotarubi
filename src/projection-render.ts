@@ -258,10 +258,22 @@ function drawHighlights(
   ctx.restore()
 }
 
+/** 四隅を重心まわりに拡大・縮小する（光らせる長方形の大きさ調整） */
+function scaleQuad(q: Quad, sw: number, sh: number): Quad {
+  if (sw === 1 && sh === 1) return q
+  const cx = (q[0].x + q[1].x + q[2].x + q[3].x) / 4
+  const cy = (q[0].y + q[1].y + q[2].y + q[3].y) / 4
+  return q.map(p => ({
+    x: cx + (p.x - cx) * sw,
+    y: cy + (p.y - cy) * sh,
+  })) as Quad
+}
+
 function fillCard(
-  ctx: CanvasRenderingContext2D, q: Quad,
+  ctx: CanvasRenderingContext2D, quad: Quad,
   color: string, hl: HighlightConfig
 ): void {
+  const q = scaleQuad(quad, hl.sizeScaleW, hl.sizeScaleH)
   const { offsetX: ox, offsetY: oy } = hl
 
   if (hl.fillEnabled) {

@@ -69,6 +69,9 @@ export interface HighlightConfig {
   borderEnabled: boolean
   borderColor: string
   borderWidth: number
+  /** 光らせる長方形の大きさ。札1枚分に対する倍率（1 = 札と同じ大きさ） */
+  sizeScaleW: number
+  sizeScaleH: number
   /** 実際の札とのズレ補正（投影キャンバス px） */
   offsetX: number
   offsetY: number
@@ -107,6 +110,8 @@ export const DEFAULT_HIGHLIGHT: HighlightConfig = {
   borderEnabled: true,
   borderColor: '#ffffff',
   borderWidth: 2,
+  sizeScaleW: 1,
+  sizeScaleH: 1,
   offsetX: 0,
   offsetY: 0,
   autoPlay: false,

@@ -85,6 +85,28 @@ export function getArrangement(): { self: ArrangementCard[]; enemy: ArrangementC
 }
 
 /**
+ * 盤面を 180° 回転する（自陣と敵陣の入れ替え）。
+ * 実際に盤の反対側へ回り込んだときと同じ見え方になるよう、
+ * 陣・段・列を全て反転する: (陣, 段, 列) → (逆の陣, 2-段, 15-列)
+ */
+export function rotateBoard(): void {
+  const next: Slot[][][] = [
+    [new Array(COLS).fill(null), new Array(COLS).fill(null), new Array(COLS).fill(null)],
+    [new Array(COLS).fill(null), new Array(COLS).fill(null), new Array(COLS).fill(null)],
+  ]
+  for (let f = 0; f < 2; f++) {
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < COLS; c++) {
+        next[1 - f][2 - r][COLS - 1 - c] = _grid[f][r][c]
+      }
+    }
+  }
+  _grid = next
+  _notifyChange()
+  _renderAll()
+}
+
+/**
  * 前回の作業中の配置を読み戻す。UI を作る前でも呼べるよう、
  * グリッドの状態だけを埋めて描画はしない（起動時に main.ts から呼ぶ）。
  */
@@ -394,10 +416,14 @@ function _buildGrid(): HTMLElement {
 // ============================================================
 function _buildToolbar(toolbar: HTMLElement): void {
   toolbar.innerHTML = `
-    <button id="arrange-pattern-a">A: ランダム</button>
-    <button id="arrange-pattern-b">B: 端寄せ</button>
-    <button id="arrange-pattern-c">C: 自手動/敵ランダム</button>
-    <button id="arrange-pattern-d">D: 自手動/敵端寄せ</button>
+    <select id="arrange-pattern" title="選ぶとその並べ方で自動配置します">
+      <option value="">自動で並べる…</option>
+      <option value="A">ランダム</option>
+      <option value="B">端寄せ</option>
+      <option value="C">自陣は手動・敵陣ランダム</option>
+      <option value="D">自陣は手動・敵陣端寄せ</option>
+    </select>
+    <button id="arrange-rotate" title="自陣と敵陣を入れ替えます（盤面を180度回転）">陣を入れ替え</button>
     <button id="arrange-clear">全消去</button>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
       <input type="checkbox" id="arrange-compact"> 端寄せ自動
@@ -516,10 +542,14 @@ function _buildToolbar(toolbar: HTMLElement): void {
   syncDigits()
   if (_setDigits.size > 0) (setPanel.querySelector('#set-apply') as HTMLButtonElement).click()
 
-  toolbar.querySelector('#arrange-pattern-a')!.addEventListener('click', () => applyArrangePattern('A'))
-  toolbar.querySelector('#arrange-pattern-b')!.addEventListener('click', () => applyArrangePattern('B'))
-  toolbar.querySelector('#arrange-pattern-c')!.addEventListener('click', () => applyArrangePattern('C'))
-  toolbar.querySelector('#arrange-pattern-d')!.addEventListener('click', () => applyArrangePattern('D'))
+  const patternSel = toolbar.querySelector<HTMLSelectElement>('#arrange-pattern')!
+  patternSel.addEventListener('change', () => {
+    if (!patternSel.value) return
+    applyArrangePattern(patternSel.value as ArrangePattern)
+    patternSel.value = ''  // 見出しに戻して繰り返し選べるようにする
+  })
+
+  toolbar.querySelector('#arrange-rotate')!.addEventListener('click', rotateBoard)
   toolbar.querySelector('#arrange-clear')!.addEventListener('click', () => {
     _grid = [
       [new Array(16).fill(null), new Array(16).fill(null), new Array(16).fill(null)],
@@ -593,12 +623,13 @@ function _injectStyles(): void {
       pointer-events: none;
       line-height: 1.3;
     }
-    .grid-slot.enemy-field .slot-kimari {
-      bottom: auto; top: 1px;
-      transform: rotate(180deg);
-      transform-origin: top left;
-      left: auto; right: 1px;
-    }
+    /*
+     * 敵陣の決まり字ラベル。
+     * 以前は札の画像に合わせて 180° 回転させていたが、transform-origin が
+     * top left だったためラベルがマスの外へ出て見えなくなっていた。
+     * ラベルは研究者が読むための目印であって札の向きを再現するものではないので、
+     * 自陣と同じ向き・同じ位置にして読めるようにする。
+     */
   `
   document.head.appendChild(style)
 }

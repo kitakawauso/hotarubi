@@ -14,7 +14,12 @@ import { getHighlight, loadCalibration } from './store'
 // 型
 // ============================================================
 export interface ProjectionState {
-  mode: 'play' | 'calibrate'
+  /**
+   * play      … 通常。光らせる札だけを塗りつぶす
+   * calibrate … 投影調整。全スロットの枠線
+   * guide     … 並べ直しガイド。陣の外枠と段の区切りだけ
+   */
+  mode: 'play' | 'calibrate' | 'guide'
   cards: { self: ArrangementCard[]; enemy: ArrangementCard[] }
   /** 読まれた札（濃い色） */
   targetIds: number[]
@@ -40,8 +45,26 @@ export function clearHighlight(): void {
   _channel.postMessage({ type: 'clear_highlights' })
 }
 
-export function broadcastMode(mode: ProjectionState['mode']): void {
+// 表示モードの調停。投影調整中はガイドより調整表示を優先する。
+// （調整タブを開いたまま読み上げると両者が取り合いになるため、
+//   どちらが有効かをここ1箇所で決める。）
+let _calibrating = false
+let _guiding = false
+
+function _sendMode(): void {
+  const mode: ProjectionState['mode'] =
+    _calibrating ? 'calibrate' : _guiding ? 'guide' : 'play'
   _channel.postMessage({ type: 'mode', mode })
+}
+
+export function setProjectionCalibrating(on: boolean): void {
+  _calibrating = on
+  _sendMode()
+}
+
+export function setProjectionGuide(on: boolean): void {
+  _guiding = on
+  _sendMode()
 }
 
 export function broadcastPartial(payload: Partial<ProjectionState>): void {
@@ -60,6 +83,20 @@ const CARD_W_MM = 52
 const CARD_H_MM = 73
 const COLS = 16
 const ROWS_PER_FIELD = 3
+
+/**
+ * 中央（列7と列8の間）に空ける余白（mm）。
+ * 陣の幅が札16枚分を超える端数がそのまま中央の余白になる。
+ * 例) 16.7枚分 → 0.7枚分 = 36.4mm
+ */
+function centerGapMm(cal: Calibration): number {
+  return Math.max(0, cal.boardWidthCards - COLS) * CARD_W_MM
+}
+
+/** 列の左端の論理X座標（mm）。中央より右の列は余白のぶんずれる。 */
+function colX(col: number, gap: number): number {
+  return col * CARD_W_MM + (col >= COLS / 2 ? gap : 0)
+}
 
 // 調整モードの枠線（畳の上で見やすい色）
 const CALIB_LINE = '#00e5ff'
@@ -80,13 +117,15 @@ export function renderProjection(
 
   const { calibration } = state
   const fieldH = ROWS_PER_FIELD * CARD_H_MM + (ROWS_PER_FIELD - 1) * calibration.rowGapMm
-  const logW = COLS * CARD_W_MM
+  const logW = COLS * CARD_W_MM + centerGapMm(calibration)
   const logH = fieldH * 2 + calibration.fieldGapMm
 
   const toScreen = makeTransform(calibration, canvasW, canvasH, logW, logH)
 
   if (state.mode === 'calibrate') {
     drawCalibrationGuide(ctx, state, logW, fieldH, toScreen)
+  } else if (state.mode === 'guide') {
+    drawRearrangeGuide(ctx, state, logW, fieldH, toScreen)
   } else {
     drawHighlights(ctx, state, logW, fieldH, toScreen)
   }
@@ -162,18 +201,33 @@ type Quad = [
 
 function slotQuad(
   isEnemy: boolean, row: number, col: number,
-  _logW: number, fieldH: number, rowGapMm: number, fieldGapMm: number,
+  cal: Calibration, fieldH: number,
   toScreen: Transform
 ): Quad {
-  const baseY = isEnemy ? 0 : fieldH + fieldGapMm
-  const ly = baseY + row * (CARD_H_MM + rowGapMm)
-  const lx = col * CARD_W_MM
+  const baseY = isEnemy ? 0 : fieldH + cal.fieldGapMm
+  const ly = baseY + row * (CARD_H_MM + cal.rowGapMm)
+  const lx = colX(col, centerGapMm(cal))
 
   return [
     toScreen(lx,              ly),
     toScreen(lx + CARD_W_MM,  ly),
     toScreen(lx + CARD_W_MM,  ly + CARD_H_MM),
     toScreen(lx,              ly + CARD_H_MM),
+  ]
+}
+
+/** 陣（自陣または敵陣）全体の外枠 */
+function fieldQuad(
+  isEnemy: boolean, cal: Calibration, fieldH: number, logW: number,
+  toScreen: Transform
+): Quad {
+  const top = isEnemy ? 0 : fieldH + cal.fieldGapMm
+  const bottom = top + fieldH
+  return [
+    toScreen(0,    top),
+    toScreen(logW, top),
+    toScreen(logW, bottom),
+    toScreen(0,    bottom),
   ]
 }
 
@@ -196,7 +250,7 @@ function drawCalibrationGuide(
   logW: number, fieldH: number,
   toScreen: Transform
 ): void {
-  const { rowGapMm, fieldGapMm } = state.calibration
+  const cal = state.calibration
 
   ctx.save()
   ctx.strokeStyle = CALIB_LINE
@@ -206,8 +260,7 @@ function drawCalibrationGuide(
     const isEnemy = field === 0
     for (let row = 0; row < ROWS_PER_FIELD; row++) {
       for (let col = 0; col < COLS; col++) {
-        const q = slotQuad(isEnemy, row, col, logW, fieldH, rowGapMm, fieldGapMm, toScreen)
-        pathQuad(ctx, q)
+        pathQuad(ctx, slotQuad(isEnemy, row, col, cal, fieldH, toScreen))
         ctx.stroke()
       }
     }
@@ -216,12 +269,52 @@ function drawCalibrationGuide(
   // 盤面全体の外枠は太く（四隅を合わせやすくするため）
   ctx.strokeStyle = CALIB_EDGE
   ctx.lineWidth = 3
-  const logH = fieldH * 2 + fieldGapMm
+  const logH = fieldH * 2 + cal.fieldGapMm
   pathQuad(ctx, [
     toScreen(0, 0), toScreen(logW, 0),
     toScreen(logW, logH), toScreen(0, logH),
   ])
   ctx.stroke()
+
+  ctx.restore()
+}
+
+// ============================================================
+// 並べ直しガイドモード: 陣ごとの外枠と段の区切りだけ
+// 札を並べ直すための目安なので、マス目までは描かない。
+// ============================================================
+function drawRearrangeGuide(
+  ctx: CanvasRenderingContext2D,
+  state: ProjectionState,
+  logW: number, fieldH: number,
+  toScreen: Transform
+): void {
+  const cal = state.calibration
+  const rowH = CARD_H_MM + cal.rowGapMm
+
+  ctx.save()
+  ctx.strokeStyle = state.highlight.guideColor
+  ctx.lineWidth = Math.max(1, state.highlight.guideWidth)
+
+  for (let field = 0; field < 2; field++) {
+    const isEnemy = field === 0
+    const top = isEnemy ? 0 : fieldH + cal.fieldGapMm
+
+    // 陣の外枠
+    pathQuad(ctx, fieldQuad(isEnemy, cal, fieldH, logW, toScreen))
+    ctx.stroke()
+
+    // 段の区切り（2本）。札の下端に合わせ、段間隔の中央に引く
+    for (let r = 1; r < ROWS_PER_FIELD; r++) {
+      const y = top + r * rowH - cal.rowGapMm / 2
+      const a = toScreen(0, y)
+      const b = toScreen(logW, y)
+      ctx.beginPath()
+      ctx.moveTo(a.x, a.y)
+      ctx.lineTo(b.x, b.y)
+      ctx.stroke()
+    }
+  }
 
   ctx.restore()
 }
@@ -248,10 +341,7 @@ function drawHighlights(
       const isCandidate = !isTarget && candidates.has(card.poem_id)
       if (!isTarget && !isCandidate) continue
 
-      const q = slotQuad(
-        isEnemy, card.row, card.col,
-        logW, fieldH, calibration.rowGapMm, calibration.fieldGapMm, toScreen
-      )
+      const q = slotQuad(isEnemy, card.row, card.col, calibration, fieldH, toScreen)
       fillCard(ctx, q, isTarget ? highlight.targetColor : highlight.candidateColor, highlight)
     }
   }

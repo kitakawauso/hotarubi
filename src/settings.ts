@@ -163,6 +163,19 @@ export function initHighlightPanel(containerSelector: string): void {
     <p class="hl-group">長方形の大きさ・位置</p>
     <div id="hl-rect">${RECT_SLIDERS.map(d => _sliderRow(d, cfg)).join('')}</div>
 
+    <p class="hl-group">並べ直しガイド</p>
+    <div class="hl-row">
+      <label style="min-width:auto;" title="上の句を読み終えたら陣の外枠と段の区切りを投影し、次の下の句で消します">
+        <input type="checkbox" id="hl-guide"> 上の句のあとに投影する
+      </label>
+    </div>
+    <div class="hl-row">
+      <label>ガイド色</label>
+      <input type="color" id="hl-guide-color" value="${cfg.guideColor}">
+      <input type="range" data-key="guideWidth" min="1" max="10" step="1" value="${cfg.guideWidth}">
+      <span class="hl-val" data-val="guideWidth">${cfg.guideWidth}px</span>
+    </div>
+
     <p class="hl-group">自動再生</p>
     <div class="hl-row">
       <label><input type="checkbox" id="hl-autoplay"> 自動で進む</label>
@@ -232,6 +245,7 @@ export function initHighlightPanel(containerSelector: string): void {
     ['#hl-target-color', 'targetColor'],
     ['#hl-candidate-color', 'candidateColor'],
     ['#hl-border-color', 'borderColor'],
+    ['#hl-guide-color', 'guideColor'],
   ]
   for (const [sel, key] of colors) {
     const el = q<HTMLInputElement>(sel)
@@ -260,6 +274,11 @@ export function initHighlightPanel(containerSelector: string): void {
   fillOn.addEventListener('change', () => { _update({ fillEnabled: fillOn.checked }); syncShape() })
   borderOn.addEventListener('change', () => { _update({ borderEnabled: borderOn.checked }); syncShape() })
   syncShape()
+
+  // --- 並べ直しガイド ---
+  const guide = q<HTMLInputElement>('#hl-guide')
+  guide.checked = cfg.rearrangeGuide
+  guide.addEventListener('change', () => _update({ rearrangeGuide: guide.checked }))
 
   // --- 自動再生 ---
   const auto = q<HTMLInputElement>('#hl-autoplay')

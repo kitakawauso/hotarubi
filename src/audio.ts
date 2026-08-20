@@ -15,7 +15,7 @@
 import { audioPath, getPoems, JOUKA_ID, computeEffectiveKimari } from './data'
 import { getArrangement, getFieldPoemIds, removeCard } from './card-grid'
 import { getHighlight, loadReadSet, saveReadSet, type ReadSet } from './store'
-import { broadcastHighlight, clearHighlight } from './projection-render'
+import { broadcastHighlight, clearHighlight, setProjectionGuide } from './projection-render'
 import { openCardMultiSelect } from './main'
 
 /** 序歌の上の句と下の句の間。調整する必要がないので固定。 */
@@ -234,6 +234,8 @@ function _enterJokaShimo(): void {
 
 function _enterShimo(): void {
   if (_prev === null) { _enterSilence(); return }
+  // 下の句が始まったら並べ直しガイドを引っ込める
+  setProjectionGuide(false)
   _phase = 'shimo'
   _current = _prev
   _updateUI()
@@ -289,6 +291,9 @@ function _finishKami(): void {
   _emit('kami_end', done, _readCount - 1)
   clearHighlight()
 
+  // 上の句を読み終えたので、札を並べ直すためのガイドを出す
+  if (getHighlight().rearrangeGuide) setProjectionGuide(true)
+
   // 読まれた札を場から取り除く（場に無ければ何もしない）
   removeCard(done)
 
@@ -301,6 +306,7 @@ function _finishKami(): void {
 function _endSession(): void {
   _clearTimers()
   clearHighlight()
+  setProjectionGuide(false)
   if (_audio) { _audio.pause(); _audio.onended = null }
   _playing = false
   _phase = null

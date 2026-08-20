@@ -33,6 +33,11 @@ export interface Calibration {
   rowGapMm: number
   /** 自陣と敵陣の隙間（mm） */
   fieldGapMm: number
+  /**
+   * 陣の横幅を札何枚分にするか。実際の競技陣は約16.7枚分で、
+   * 16列ぶんに収まらない端数は中央（列7と列8の間）の余白になる。
+   */
+  boardWidthCards: number
 }
 
 export interface ArrangementCard {
@@ -75,6 +80,14 @@ export interface HighlightConfig {
   /** 実際の札とのズレ補正（投影キャンバス px） */
   offsetX: number
   offsetY: number
+  /**
+   * 上の句を読み終えたあと、札を並べ直すためのガイド
+   * （陣の外枠と段の区切り）を投影するか。
+   * 次の下の句が始まると消える。
+   */
+  rearrangeGuide: boolean
+  guideColor: string
+  guideWidth: number
   /** 自動で次の札へ進むか */
   autoPlay: boolean
   /** 自動再生の間隔（秒） */
@@ -93,6 +106,7 @@ export function defaultCalibration(): Calibration {
     rowEdges: null,
     rowGapMm: 10,
     fieldGapMm: 30,
+    boardWidthCards: 16.7,
   }
 }
 
@@ -114,6 +128,9 @@ export const DEFAULT_HIGHLIGHT: HighlightConfig = {
   sizeScaleH: 1,
   offsetX: 0,
   offsetY: 0,
+  rearrangeGuide: false,
+  guideColor: '#00e5ff',
+  guideWidth: 2,
   autoPlay: false,
   autoPlayIntervalSec: 1.0,
 }
@@ -148,6 +165,7 @@ export function loadCalibration(): Calibration {
     rowEdges: Array.isArray(raw.rowEdges) ? raw.rowEdges : null,
     rowGapMm: typeof raw.rowGapMm === 'number' ? raw.rowGapMm : def.rowGapMm,
     fieldGapMm: typeof raw.fieldGapMm === 'number' ? raw.fieldGapMm : def.fieldGapMm,
+    boardWidthCards: typeof raw.boardWidthCards === 'number' ? raw.boardWidthCards : def.boardWidthCards,
   }
 }
 

@@ -7,7 +7,7 @@
 // プレビューと投影ウィンドウで解像度が違っても同じ位置になる。
 // ============================================================
 
-import { renderProjection, broadcastMode, broadcastPartial } from './projection-render'
+import { renderProjection, setProjectionCalibrating, broadcastPartial } from './projection-render'
 import type { ProjectionState } from './projection-render'
 import { getArrangement, onArrangementChange } from './card-grid'
 import {
@@ -51,7 +51,7 @@ export function broadcastCalibration(): void {
 
 /** 調整タブに入った/出たときに投影の表示モードを切り替える */
 export function setCalibrationMode(on: boolean): void {
-  broadcastMode(on ? 'calibrate' : 'play')
+  setProjectionCalibrating(on)
 }
 
 // ============================================================
@@ -209,6 +209,16 @@ export function initCalibration(containerSelector: string): void {
       </div>
       <div id="cal-history"></div>
 
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:center;">
+        <label style="display:flex;align-items:center;gap:8px;"
+               title="陣の横幅を札何枚分にするか。16枚を超えた端数が中央の余白になります">
+          陣の幅
+          <input type="number" id="cal-width" min="16" max="25" step="0.1" style="width:76px;">
+          <span style="font-size:12px;color:var(--text3);">枚分</span>
+          <span id="cal-width-note" style="font-size:11px;color:var(--text3);"></span>
+        </label>
+      </div>
+
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
         <label style="display:flex;align-items:center;gap:8px;">
           段間隔
@@ -283,12 +293,29 @@ export function initCalibration(containerSelector: string): void {
   const rowGapVal = container.querySelector<HTMLElement>('#cal-rowgap-val')!
   const fieldGapVal = container.querySelector<HTMLElement>('#cal-fieldgap-val')!
 
+  const widthInput = container.querySelector<HTMLInputElement>('#cal-width')!
+  const widthNote = container.querySelector<HTMLElement>('#cal-width-note')!
+
   const syncGaps = () => {
     rowGap.value = String(_cal.rowGapMm)
     fieldGap.value = String(_cal.fieldGapMm)
     rowGapVal.textContent = `${_cal.rowGapMm} mm`
     fieldGapVal.textContent = `${_cal.fieldGapMm} mm`
+
+    widthInput.value = String(_cal.boardWidthCards)
+    const extra = Math.max(0, _cal.boardWidthCards - 16)
+    widthNote.textContent = extra > 0
+      ? `中央に ${extra.toFixed(1)} 枚分（${Math.round(extra * 52)} mm）の余白`
+      : '中央の余白なし'
   }
+
+  widthInput.addEventListener('input', () => {
+    const v = parseFloat(widthInput.value)
+    if (!Number.isFinite(v)) return
+    _cal.boardWidthCards = Math.min(25, Math.max(16, v))
+    syncGaps()
+    _apply()
+  })
 
   rowGap.addEventListener('input', () => {
     _cal.rowGapMm = parseFloat(rowGap.value)

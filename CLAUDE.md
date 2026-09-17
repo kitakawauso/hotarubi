@@ -78,9 +78,19 @@ npm run preview  # dist をプレビュー（COOP/COEP は preview にも効く�
 エントリポイントは2つ。`vite.config.ts` の `rollupOptions.input` で両方をビルド対象にしています。
 
 ```
-index.html  → src/main.ts       研究者用の操作画面（6タブ）
+index.html  → src/main.ts       研究者用の操作画面（3タブ）
 projection.html → src/projection.ts   投影用の表示専用画面（Canvas 1枚のみ）
 ```
+
+タブは研究者がたどる順に並べてあります。
+
+| タブ | 中身 |
+| --- | --- |
+| 投影調整 | 四隅・行ワープのドラッグ、陣の幅・段間隔、保存履歴 |
+| カメラ | プレイヤー管理（左）と姿勢推定の映像（右）。計測するときだけ使う |
+| 競技 | 読み上げとハイライト設定（左）、札配置グリッド（右） |
+
+タブバー右端の「投影ウィンドウ」ボタンはどのタブからでも押せます。
 
 ### 2画面間の通信
 
@@ -90,34 +100,48 @@ projection.html → src/projection.ts   投影用の表示専用画面（Canvas 
 
 | メッセージ | 送信元 | 内容 |
 | --- | --- | --- |
-| `state` | `card-grid.ts` | 自陣・敵陣の札配置 |
-| `highlight` | `projection-render.ts` の `scheduleHighlights` | ハイライトする poem_id の配列 |
+| `state` | `projection-render.ts` の `broadcastPartial()` / `broadcastAll()` | `ProjectionState` の部分更新（札配置・キャリブレーション・ハイライト設定） |
+| `highlight` | `audio.ts` の `_scheduleHighlights()` | 光らせる poem_id（確定色の `targetIds` と候補色の `candidateIds`） |
 | `clear_highlights` | `audio.ts` | 読み上げ停止・終了時 |
-| `settings` | `settings.ts` | ハイライト外観・投影レイアウト |
-| `calibration` | `calibration.ts` | 四隅と行エッジの座標 |
+| `mode` | `projection-render.ts` の `_sendMode()` | 表示モード（`play` / `calibrate` / `guide`） |
 | `hello` | `projection.ts` | 投影ウィンドウの起動通知（唯一の投影→操作方向） |
 
 メッセージ型は `src/projection.ts` の `ProjectionMessage` に定義されています。投影側は状態を受け取って `renderProjection()` を呼ぶだけで、ロジックを持ちません。
+
+**投影への送信は全て `projection-render.ts` に集約されています。** 各モジュールが直接 `BroadcastChannel` に書くのではなく、そこの `broadcastPartial()` / `broadcastHighlight()` / `setProjectionCalibrating()` / `setProjectionGuide()` を呼びます。
+
+表示モードは `projection-render.ts` の `_sendMode()` が1箇所で調停します。**投影調整中はガイドより調整表示を優先します。** 調整タブを開いたまま読み上げると両者がモードを取り合うためです。
 
 ### 中心にあるのは読み上げイベント
 
 `src/audio.ts` が読み上げステートマシンであると同時に、システム全体のイベントバスです。**新しい計測を追加するときは、原則ここに購読者を足す形になります。**
 
+読み方は **hisakatano**（`/Users/kitagawarisa/hisakatano`）に倣っています。実際の競技と同じく
+**「前の札の下の句 → 無音 → 次の札の上の句」** が1サイクルで、**上の句が取り札フェーズ**です。
+同じ札の上下をまとめて読むのではない点に注意してください。
+
 ```
 audio.ts (ステートマシン)
-  idle → jouka_upper → jouka_lower → jouka_lower_again → gap
-       → upper → wait_for_lower → lower → gap → (次の札へ)
+  idle --再生(初回)--> joka → joka_silence → joka_shimo
+                                                 ↓
+  idle <--(手動)-- kami ← silence ← shimo <──────┘
+       --再生-->  shimo → silence → kami → …（自動再生なら継続）
 
   onReadingEvent() で以下を配信:
-    session_start / upper_start / lower_start / lower_end / session_end
+    session_start / shimo_start / shimo_end / silence_start
+    kami_start / kami_end / session_end
 
   購読者:
-    session.ts  … reading_log への記録、配置スナップショット保存、取られた札の除去
-    posture.ts  … 骨格キャプチャ窓の開閉（lower_end で pre_upper 開始、
-                  upper_start で post_upper に切替え、gap_upper_lower 秒後に停止）
+    session.ts  … reading_log への記録、配置スナップショット保存
+    posture.ts  … 骨格キャプチャ窓の開閉（silence_start で pre_upper 開始、
+                  kami_start で post_upper に切替え、kami_end で停止）
 ```
 
-`upper_start` の時点ではまだ `reading_log.id` が確定していないため、`posture.ts` はいったん直前の札の `log_id` でフレームをバッファし、`upper_start` 受信時に確定した `log_id` へ付け替えています（`posture.ts` の該当コメント参照）。ここを触るときは順序依存に注意してください。
+1枚の札のログは**2サイクルにまたがって**埋まります。`kami_start` でその札の行を作り、次のサイクルの `shimo_start` / `shimo_end` で下の句の時刻を書き足します。
+
+`kami_start` の時点ではまだ `reading_log.id` が確定していないため、`posture.ts` はいったん直前の札の `log_id` でフレームをバッファし、`kami_start` 受信時に確定した `log_id` へ付け替えています（`posture.ts` の該当コメント参照）。ここを触るときは順序依存に注意してください。
+
+**停止からの再開位置**はフェーズごとに変えています。下の句の途中で止めたらその下の句の頭から、上の句の途中で止めたらその札を読み終えた扱いにして、まだ読んでいないその札の下の句から始めます（`_resumeFrom`）。
 
 ### 決まり字の動的計算
 
@@ -125,21 +149,41 @@ audio.ts (ステートマシン)
 
 **母集団は「未読札全体」であって「場に並んでいる札」ではありません**（`audio.ts` の `_remainingIds()` = `_unread` + `_next`）。実際の競技と同じく、場に無い空札も母集団に含めます。選手はその札が空札かどうかを読まれるまで判別できないので、空札が残っている間は決まり字は短くなりません。場の札だけを母集団にすると決まり字が実際より短く出ます。一方で**光らせる対象は場にある札だけ**なので、`_scheduleHighlights()` の照合は `getFieldPoemIds()` に対して行います。この2つを混同しないこと。
 
-`scheduleHighlights()` はこの結果をもとに、プレフィックス長 `len` ごとに
+`audio.ts` の `_scheduleHighlights()` はこの結果をもとに、プレフィックス長 `k` ごとに
 
 ```
-点灯時刻 = 上の句開始時刻 + hl_base_offset + len × hl_per_char
+点灯時刻 = 無音の開始 + silenceSec + leadSec + (k-1) × perCharSec
 ```
 
-のタイマーを張り、その時点で該当する札の集合を投影側へ送ります。**ハイライトのタイミング制御は全てここに集約されているので、RQ1 に関わる見せ方の変更はこの関数と `projection-render.ts` の `drawCardQuad()` を見てください。**
+のタイマーを張り、その時点で該当する**場の**札を投影側へ送ります。上の句が始まるのは「無音の開始 + silenceSec」なので、`leadSec` は**上の句開始を0とした点灯オフセット**です（UI 上の名前も「点灯オフセット」）。マイナスで前倒しできますが `Math.max(0, …)` で頭打ちなので、無音より前には遡れません。
+
+**ハイライトのタイミング制御は全てここに集約されているので、RQ1 に関わる見せ方の変更はこの関数と `projection-render.ts` の `fillCard()` を見てください。**
+
+光らせ方は2通りを設定で切り替えます（`HighlightConfig.mode`）。
+
+- `target_only` … 読まれた札1枚だけ
+- `kimariji_stages` … 決まり字で段階的に絞り込む。2枚以上該当する間は候補色でまとめて光らせ、1枚に絞れたときだけ確定色にする（早い段階で正解が分かってしまわないように）
+
+空札が読まれたときも `highlightKarafuda` が有効なら同じ規則で光らせます。**ここで色分けを変えないこと。** 空札であることが見た目から分かってしまい、反応を測る意味がなくなります。
 
 ### 投影の座標変換
 
-論理座標（mm 単位、16列 × 3段 × 2陣）→ 画面座標の変換が `projection-render.ts` にあります。
+論理座標（mm 単位、16列 × 3段 × 2陣）→ 画面座標の変換が `projection-render.ts` の `makeTransform()` にあります。
 
-- キャリブレーション未設定 → `drawFitted()`（画面にフィット）
-- 四隅のみ設定 → `drawWarped()` の bilinear 補間
+- 四隅のみ → bilinear 補間
 - 行エッジも設定（行ワープモード）→ 各行の左右端を通る区分線形補間
+
+**キャリブレーションは正規化座標（0〜1）で持ちます。** 調整プレビューと投影ウィンドウで解像度が違うため、割合で持たないと同じ位置になりません。
+
+陣の横幅は「札何枚分か」で指定します（`Calibration.boardWidthCards`、既定 16.7）。16列に収まらない端数が**中央（列7と列8の間）の余白**になります（`centerGapMm()` / `colX()`）。
+
+投影の描画は3モードです。
+
+| モード | 描くもの |
+| --- | --- |
+| `play` | 通常。**何も描かず、光らせる札だけを塗りつぶす**（取り札の画像は投影しない） |
+| `calibrate` | 投影調整。全スロットの枠線と盤面の外枠 |
+| `guide` | 並べ直しガイド。陣ごとの外枠と段の区切りだけ |
 
 **行・列の向きは敵陣も自陣も同じです。** 札配置タブのグリッドがそのまま盤面の見取り図で、そこで左上に置いた札は投影でも左上で光ります。以前は敵陣だけ論理座標を 180° 反転していて、配置画面と投影で光る位置が点対称にずれていました。ここを「敵陣は反転すべき」と直さないこと。カードは 52 × 73 mm 固定。
 
@@ -150,10 +194,10 @@ audio.ts (ステートマシン)
 | `main.ts` | タブルーター、共有モーダル、トースト、起動処理 |
 | `db.ts` | SQLite 初期化・全テーブル定義・型・クエリ関数（`db` オブジェクト） |
 | `data.ts` | 百人一首 CSV 読み込み、アセットパス解決、決まり字計算 |
-| `audio.ts` | 読み上げステートマシン、読み上げイベント配信、読み上げパネル UI |
+| `audio.ts` | 読み上げステートマシン、読み上げイベント配信、ハイライトの予約、読み上げパネル UI |
 | `session.ts` | セッション開始/終了、`reading_log` と配置スナップショットの記録 |
-| `card-grid.ts` | 札配置グリッド UI と配置状態の保持、配置パターン A〜E |
-| `projection-render.ts` | 投影 Canvas 描画、座標変換、ハイライトスケジューラ |
+| `card-grid.ts` | 札配置グリッド UI と配置状態の保持、配置パターン、札セット、端寄せ・挿入 |
+| `projection-render.ts` | 投影 Canvas 描画、座標変換、投影への送信とモード調停 |
 | `projection.ts` | 投影ウィンドウのエントリ（受信して描画するだけ） |
 | `calibration.ts` | 投影調整 UI（四隅・行エッジのドラッグ） |
 | `posture.ts` | MediaPipe Pose、カメラ制御、骨格キャプチャと可視化 |
@@ -166,17 +210,19 @@ audio.ts (ステートマシン)
 以下はコードを読んで確認済みの「繋がっていない箇所」です。**研究データの妥当性に直接効くものが含まれているので、関連する作業を依頼されたら真っ先にここを疑ってください。**
 
 1. **セッションにプレイヤーと設定が紐付いていない。**
-   `session.ts` の `startSession()` は第3引数の `settings` を `_currentSettings` から受け取りますが、`_currentSettings` に外部から値を入れる経路がありません。結果として `sessions` 行は常に `player_id = NULL`、`settings_id = NULL`、`settings_snapshot = '{}'` で記録されます。`settings.ts` の `getActiveSettings()` も、`session.ts` の `getSessionSettings()` も呼び出し元がありません。
-   → 誰のどの条件の記録かが DB から復元できない状態です。
+   `session.ts` の `startSession()` は `settings` を `_currentSettings` から受け取りますが、`_currentSettings` に外部から値を入れる経路がありません。結果として `sessions` 行は常に `player_id = NULL`、`settings_id = NULL`、`settings_snapshot = '{}'` で記録されます。
+   → 誰のどの条件の記録かが DB から復元できない状態です。競技タブにプレイヤー選択を足し、`startSession()` へ現在の `HighlightConfig` を渡す必要があります。
 
 2. **`sessions.has_highlight` が常に 1 で固定。**
    `session.ts` にリテラルで `has_highlight: 1` と書かれており、ハイライト無し条件を記録する手段がありません。RQ1 の比較条件そのものなので、条件切り替えを実装するときはここと操作 UI の両方が必要です。
 
-3. **シャッフルにバイアスがある。**
-   読み順（`audio.ts`）と配置（`card-grid.ts`）の両方で `.sort(() => Math.random() - 0.5)` を使っています。一様分布ではないので、順序のランダム性が結果に効く分析をするなら Fisher-Yates に置き換えてください。
+3. **配置のシャッフルにバイアスがある。**
+   `card-grid.ts` の `_shuffle()` が `.sort(() => Math.random() - 0.5)` を使っています。一様分布ではないので、配置のランダム性が結果に効く分析をするなら Fisher-Yates に置き換えてください。
+   読み順は `audio.ts` の `_pickNext()`（未読から一様にインデックス抽選）に書き換え済みで、こちらは問題ありません。
 
 4. **計測データが永続化されていない（重要）。**
-   `db.ts` はメインスレッドで `sqlite3.oo1.OpfsDb` を作ろうとしますが、OPFS の VFS は `Atomics.wait()` を使うためワーカー内でしか動きません。結果として毎回メモリ DB にフォールバックし、リロードで全ての記録が消えます。実際に計測に使う前に `sqlite3Worker1Promiser` 経由へ移す必要があります。**その際 `db` の全メソッドが非同期になるため、`player.ts` / `settings.ts` / `session.ts` / `posture.ts` の呼び出し側もまとめて直すことになります。**
+   `db.ts` はメインスレッドで `sqlite3.oo1.OpfsDb` を作ろうとしますが、OPFS の VFS は `Atomics.wait()` を使うためワーカー内でしか動きません。結果として毎回メモリ DB にフォールバックし、**リロードで `reading_log` も `posture_frames` も全部消えます。** 実際に計測に使う前に `sqlite3Worker1Promiser` 経由へ移す必要があります。
+   その際 `db` の全メソッドが非同期になるため呼び出し側も直すことになりますが、`db` を使うのは `session.ts` / `posture.ts` / `main.ts`（`initDB()` のみ）の3ファイルだけです。プレイヤーは localStorage に移してあるので `player.ts` は影響を受けません。
 
 5. **動作開始点の抽出は未実装。**
    `posture_frames` は記録されますが、そこから動作開始タイミングを取り出す処理はまだありません。上の「評価指標」の方針に沿った実装はこれからです。
@@ -191,9 +237,22 @@ audio.ts (ステートマシン)
 - **端寄せ（送り）の規則。** 出札があった段の、**出札があった側の半分だけ**を詰めます。中心（列8）を境に、出札が左半分なら左半分の札だけを1つずつ左へ、右半分なら右半分の札だけを1つずつ右へ。**反対側の半分は動かしません。** 行全体を詰め直す実装や、半分をまたいで札を動かす実装は誤りです。ドラッグでの挿入（`_insertAt()`）も同じ規則で押し出します。
 - **取り札画像の番号。** `torifuda_F_{N}.jpeg` の `N` は札番号そのもの（`0`〜`100` の101枚、0は白紙）です。`札番号 − 1` と誤解した実装になっていて、全札で画像が1つずれていました。アセットの命名規則は思い込まず、実ファイルの枚数と中身で確認すること。
 
+## CSV の表記（決着済み・2026-09-17）
+
+`public/data/hyakuninisshu.csv` の和歌ひらがなは、**読み上げの発音に合わせて現代仮名遣いへ寄せる**方針で手作業により修正済みです。`あはれ→あわれ`、`てふ→ちょう`、`なには→なにわ` など。
+
+**決まり字列は和歌ひらがなの接頭辞でなければなりません。** `computeEffectiveKimari()` が和歌ひらがなから切り出すため、崩れると表示と計算が食い違います。全100首で接頭辞になっていること・決まり字に重複が無いことは確認済みです。CSV を触ったら次で再確認してください。
+
+```bash
+awk -F, 'NR>1 { if (index($2,$3)!=1) print $1" "$3 }' public/data/hyakuninisshu.csv
+```
+
+`ぢ`（16）/ `づ`（11）/ `ゐ`（4）/ `ゑ`（8）は**現状のまま残す**と決めました。このうち決まり字の範囲に入るのは39番「あさぢ」だけで、他は決まり字より後ろにあるため決まり字の計算には影響しません。**蒸し返して一括変換しないこと。**
+
 ## コーディング上の約束事
 
 - コメントもコミットメッセージも日本語。既存ファイルは `// ===...===` の帯コメントでセクションを区切っているので合わせてください。
 - モジュール内部の変数・関数は `_` プレフィックス、export するものは付けない、という慣習になっています。
 - DB のカラム名は snake_case、TypeScript の変数は camelCase。`db.ts` の型定義は DB のカラム名をそのまま使っています。
-- 数値設定の追加は `db.ts` の `Settings` 型 + `DEFAULT_SETTINGS` + `CREATE TABLE` + `upsertSettings()` の4箇所、UI は `settings.ts` の `buildSettingsForm()` の `sections` 配列と `readFormValues()` の `sliderKeys` に足す、という手順になります。投影に反映するなら `setActiveSettings()` のブロードキャストと `ProjectionState['settings']` にも追加が必要です。
+- **ハイライト設定に項目を足す手順。** `store.ts` の `HighlightConfig` 型と `DEFAULT_HIGHLIGHT` に足し、`settings.ts` の該当する配列（`TIMING_FIELDS` / `APPEARANCE_SLIDERS` / `RECT_SLIDERS`）かフォームの HTML に行を足します。`_update()` を通せば localStorage への保存と投影への配信は自動です。投影側で使うなら `projection-render.ts` の描画関数から `state.highlight` 経由で読みます。
+- **投影調整に項目を足す手順。** `store.ts` の `Calibration` 型・`defaultCalibration()`・`loadCalibration()` の3箇所に足し、`calibration.ts` の UI と `syncGaps()` に足します。

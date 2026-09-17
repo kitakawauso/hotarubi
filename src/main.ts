@@ -146,6 +146,120 @@ function _resetSearchInput(el: HTMLInputElement): void {
   el.value = ''
 }
 
+// ============================================================
+// 検索欄の入力をひらがなに寄せる
+//
+// IME が漢字やカタカナに変換してしまうと決まり字で絞り込めないため、
+// IME を切ったままローマ字で打っても検索できるようにする。
+// あわせて全角英数の半角化とカタカナのひらがな化も行う。
+//
+// 変換表は百人一首に実際に出てくるかなを賄えれば十分だが、
+// 打ち慣れた綴り（si/shi、ti/chi、tu/tsu など）は両方受ける。
+// ぢ/づ/ゐ/ゑ は日本語IMEと同じく di/du/wi/we で出す。
+// ============================================================
+const ROMAJI: Record<string, string> = {
+  a: 'あ', i: 'い', u: 'う', e: 'え', o: 'お',
+  ka: 'か', ki: 'き', ku: 'く', ke: 'け', ko: 'こ',
+  ga: 'が', gi: 'ぎ', gu: 'ぐ', ge: 'げ', go: 'ご',
+  sa: 'さ', si: 'し', shi: 'し', su: 'す', se: 'せ', so: 'そ',
+  za: 'ざ', zi: 'じ', ji: 'じ', zu: 'ず', ze: 'ぜ', zo: 'ぞ',
+  ta: 'た', ti: 'ち', chi: 'ち', tu: 'つ', tsu: 'つ', te: 'て', to: 'と',
+  da: 'だ', di: 'ぢ', du: 'づ', dzu: 'づ', de: 'で', do: 'ど',
+  na: 'な', ni: 'に', nu: 'ぬ', ne: 'ね', no: 'の',
+  ha: 'は', hi: 'ひ', hu: 'ふ', fu: 'ふ', he: 'へ', ho: 'ほ',
+  ba: 'ば', bi: 'び', bu: 'ぶ', be: 'べ', bo: 'ぼ',
+  pa: 'ぱ', pi: 'ぴ', pu: 'ぷ', pe: 'ぺ', po: 'ぽ',
+  ma: 'ま', mi: 'み', mu: 'む', me: 'め', mo: 'も',
+  ya: 'や', yu: 'ゆ', yo: 'よ',
+  ra: 'ら', ri: 'り', ru: 'る', re: 'れ', ro: 'ろ',
+  wa: 'わ', wi: 'ゐ', we: 'ゑ', wo: 'を',
+  nn: 'ん', "n'": 'ん',
+  kya: 'きゃ', kyu: 'きゅ', kyo: 'きょ',
+  gya: 'ぎゃ', gyu: 'ぎゅ', gyo: 'ぎょ',
+  sha: 'しゃ', shu: 'しゅ', sho: 'しょ',
+  sya: 'しゃ', syu: 'しゅ', syo: 'しょ',
+  ja: 'じゃ', ju: 'じゅ', jo: 'じょ',
+  jya: 'じゃ', jyu: 'じゅ', jyo: 'じょ',
+  zya: 'じゃ', zyu: 'じゅ', zyo: 'じょ',
+  cha: 'ちゃ', chu: 'ちゅ', cho: 'ちょ',
+  tya: 'ちゃ', tyu: 'ちゅ', tyo: 'ちょ',
+  nya: 'にゃ', nyu: 'にゅ', nyo: 'にょ',
+  hya: 'ひゃ', hyu: 'ひゅ', hyo: 'ひょ',
+  bya: 'びゃ', byu: 'びゅ', byo: 'びょ',
+  pya: 'ぴゃ', pyu: 'ぴゅ', pyo: 'ぴょ',
+  mya: 'みゃ', myu: 'みゅ', myo: 'みょ',
+  rya: 'りゃ', ryu: 'りゅ', ryo: 'りょ',
+}
+
+/** ローマ字の連なりをひらがなにする。打ちかけの末尾は捨てる。 */
+function _romajiToKana(run: string): string {
+  const s = run.toLowerCase()
+  let out = ''
+  let i = 0
+
+  while (i < s.length) {
+    const c = s[i]
+
+    // 促音: 同じ子音が2つ続く（百人一首には出てこないが打ち癖として受ける）
+    if (c === s[i + 1] && /[a-z]/.test(c) && !'aiueon'.includes(c)) {
+      out += 'っ'
+      i++
+      continue
+    }
+
+    // 3文字 → 2文字 → 1文字の順で最長一致
+    let kana = ''
+    let len = 0
+    for (const n of [3, 2, 1]) {
+      const hit = ROMAJI[s.slice(i, i + n)]
+      if (hit !== undefined) { kana = hit; len = n; break }
+    }
+    if (len > 0) { out += kana; i += len; continue }
+
+    // 母音にも拗音にもならない n は「ん」
+    if (c === 'n') { out += 'ん'; i++; continue }
+
+    // ここから先は入力途中でまだ音になっていない。絞り込みには使わない
+    break
+  }
+
+  return out
+}
+
+/** 検索欄の生の入力を、照合に使うひらがなへ変換する */
+function _toSearchKana(input: string): string {
+  const normalized = input.normalize('NFKC')
+  const hira = normalized.replace(/[ァ-ヶ]/g, ch =>
+    String.fromCharCode(ch.charCodeAt(0) - 0x60))
+  // 既にかなの部分はそのままに、ローマ字の連なりだけを変換する
+  return hira.replace(/[A-Za-z']+/g, _romajiToKana)
+}
+
+/** 検索欄から絞り込みに使う文字列を取り出す */
+function _searchQuery(el: HTMLInputElement): string {
+  return _toSearchKana(el.value).trim()
+}
+
+/**
+ * 絞り込みの一致判定。
+ * 決まり字の打ちかけだけでなく、決まり字より長く打った場合も拾う
+ * （「むらさめ」で決まり字「む」の札が残るように）。Enter の判定と揃えてある。
+ */
+function _matchesQuery(o: ModalCardOption, q: string): boolean {
+  if (!q) return true
+  return o.kimari.startsWith(q)
+    || (o.kimari.length > 0 && q.startsWith(o.kimari))
+    || (o.label?.includes(q) ?? false)
+    || String(o.poem_id) === q
+}
+
+/** 変換結果を検索欄の脇に出す（生の入力と違うときだけ） */
+function _showQueryHint(raw: string, kana: string): void {
+  const hint = document.getElementById('modal-query-kana')
+  if (!hint) return
+  hint.textContent = kana && kana !== raw.trim() ? `→ ${kana}` : ''
+}
+
 /**
  * 検索文字列に対して「これ1枚」と言い切れる札を返す。
  * 決まり字ちょうど・札番号・決まり字より長く打った場合・打ちかけの
@@ -188,12 +302,8 @@ export function openCardModal(
   modalTitle.textContent = title
   _resetSearchInput(searchInput)
 
-  const filterOf = (f: string) => f
-    ? options.filter(o => o.kimari.startsWith(f) || o.label?.includes(f) || String(o.poem_id) === f)
-    : options
-
   const render = (filter: string) => {
-    _renderGrouped(grid, filterOf(filter), opt => {
+    _renderGrouped(grid, options.filter(o => _matchesQuery(o, filter)), opt => {
       const btn = document.createElement('button')
       btn.className = 'modal-card-btn'
       btn.textContent = opt.label ?? opt.kimari
@@ -204,11 +314,16 @@ export function openCardModal(
   }
 
   render('')
-  searchInput.oninput = () => render(searchInput.value.trim())
+  _showQueryHint('', '')
+  searchInput.oninput = () => {
+    const q = _searchQuery(searchInput)
+    _showQueryHint(searchInput.value, q)
+    render(q)
+  }
   searchInput.onkeydown = e => {
     if (e.key !== 'Enter') return
     e.preventDefault()
-    const hit = _uniqueMatch(options, searchInput.value)
+    const hit = _uniqueMatch(options, _searchQuery(searchInput))
     if (hit) { closeModal(); onSelect(hit.poem_id) }
   }
   overlay.classList.add('visible')
@@ -248,9 +363,7 @@ export function openCardMultiSelect(
   const syncCount = () => { countEl.textContent = `${selected.size} 枚 選択中` }
 
   const render = (filter: string) => {
-    visible = filter
-      ? options.filter(o => o.kimari.startsWith(filter) || o.label?.includes(filter) || String(o.poem_id) === filter)
-      : options
+    visible = options.filter(o => _matchesQuery(o, filter))
 
     _renderGrouped(grid, visible, opt => {
       const btn = document.createElement('button')
@@ -269,30 +382,36 @@ export function openCardMultiSelect(
 
   render('')
   syncCount()
-  searchInput.oninput = () => render(searchInput.value.trim())
+  _showQueryHint('', '')
+  searchInput.oninput = () => {
+    const q = _searchQuery(searchInput)
+    _showQueryHint(searchInput.value, q)
+    render(q)
+  }
 
   // 決まり字を打って Enter で1枚だけトグルする
   searchInput.onkeydown = e => {
     if (e.key !== 'Enter') return
     e.preventDefault()
-    const hit = _uniqueMatch(options, searchInput.value)
+    const hit = _uniqueMatch(options, _searchQuery(searchInput))
     if (!hit) return
     if (selected.has(hit.poem_id)) selected.delete(hit.poem_id)
     else selected.add(hit.poem_id)
     // ここでは続けて次の札を打てるようにフォーカスを保つ（blur しない）
     searchInput.value = ''
+    _showQueryHint('', '')
     render('')
     syncCount()
   }
 
   document.getElementById('modal-select-all')!.onclick = () => {
     for (const o of visible) selected.add(o.poem_id)
-    render(searchInput.value.trim())
+    render(_searchQuery(searchInput))
     syncCount()
   }
   document.getElementById('modal-clear-all')!.onclick = () => {
     selected.clear()
-    render(searchInput.value.trim())
+    render(_searchQuery(searchInput))
     syncCount()
   }
   document.getElementById('modal-done')!.onclick = () => {

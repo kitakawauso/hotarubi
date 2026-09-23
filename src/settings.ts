@@ -13,6 +13,7 @@ import {
   type HighlightConfig,
 } from './store'
 import { broadcastPartial } from './projection-render'
+import { syncRearrangeGuide } from './audio'
 import { initHistoryPicker, showToast } from './main'
 
 // ============================================================
@@ -165,10 +166,13 @@ export function initHighlightPanel(containerSelector: string): void {
 
     <p class="hl-group">並べ直しガイド</p>
     <div class="hl-row">
-      <label style="min-width:auto;" title="上の句を読み終えたら陣の外枠と段の区切りを投影し、次の下の句で消します">
-        <input type="checkbox" id="hl-guide"> 上の句のあとに投影する
+      <label style="min-width:auto;" title="陣の外枠と段の区切りを投影します。下の句〜上の句を読んでいる間だけ自動で隠れます">
+        <input type="checkbox" id="hl-guide"> 表示する
       </label>
     </div>
+    <p style="font-size:11px;color:var(--text3);margin:-2px 0 0;line-height:1.6;">
+      停止中・待機中は出したままになり、下の句が読まれると消えます。
+    </p>
     <div class="hl-row">
       <label>ガイド色</label>
       <input type="color" id="hl-guide-color" value="${cfg.guideColor}">
@@ -278,7 +282,11 @@ export function initHighlightPanel(containerSelector: string): void {
   // --- 並べ直しガイド ---
   const guide = q<HTMLInputElement>('#hl-guide')
   guide.checked = cfg.rearrangeGuide
-  guide.addEventListener('change', () => _update({ rearrangeGuide: guide.checked }))
+  guide.addEventListener('change', () => {
+    _update({ rearrangeGuide: guide.checked })
+    // 読み上げの状態に応じて、その場で出す／引っ込める
+    syncRearrangeGuide()
+  })
 
   // --- 自動再生 ---
   const auto = q<HTMLInputElement>('#hl-autoplay')

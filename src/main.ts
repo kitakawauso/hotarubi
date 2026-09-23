@@ -10,7 +10,7 @@
 import { initDB } from './db'
 import { loadPoems } from './data'
 import { initCardGrid, setModalOpener, broadcastArrangement, restoreCurrentArrangement } from './card-grid'
-import { initReading, setSessionType } from './audio'
+import { initReading, setSessionType, syncRearrangeGuide } from './audio'
 import { initCalibration, openProjectionWindow, broadcastCalibration, setCalibrationMode } from './calibration'
 import { initHighlightPanel, broadcastHighlightConfig } from './settings'
 import { initPosture } from './posture'
@@ -535,6 +535,8 @@ async function boot(): Promise<void> {
       broadcastArrangement()
       broadcastCalibration()
       broadcastHighlightConfig()
+      // 表示モードは最後に送る（ガイドと投影調整の両方を見て決まるため）
+      syncRearrangeGuide()
       setCalibrationMode(_currentTab === 'calibration')
     })
 
@@ -545,6 +547,7 @@ async function boot(): Promise<void> {
 
     // 初期タブ（投影調整）
     initTabOnce('calibration')
+    syncRearrangeGuide()
     setCalibrationMode(true)
 
     loading.classList.add('hidden')

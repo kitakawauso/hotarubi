@@ -216,6 +216,20 @@ function _scheduleHighlights(targetId: number): void {
 }
 
 // ============================================================
+// 並べ直しガイド
+//
+// チェックが入っていれば基本は出しておき、下の句〜上の句を読んでいる間だけ隠す。
+// 停止中・待機中・序歌の間は出したままにする（札を並べ直す時間なので）。
+// 読み上げの状態が変わったときと、チェックを切り替えたときに呼ぶ。
+// ============================================================
+const GUIDE_HIDDEN_PHASES: Phase[] = ['shimo', 'silence', 'kami']
+
+export function syncRearrangeGuide(): void {
+  const show = getHighlight().rearrangeGuide && !GUIDE_HIDDEN_PHASES.includes(_phase)
+  setProjectionGuide(show)
+}
+
+// ============================================================
 // 遷移
 // ============================================================
 function _enterJoka(): void {
@@ -244,10 +258,10 @@ function _enterJokaShimo(): void {
 
 function _enterShimo(): void {
   if (_prev === null) { _enterSilence(); return }
-  // 下の句が始まったら並べ直しガイドを引っ込める
-  setProjectionGuide(false)
   _phase = 'shimo'
   _current = _prev
+  // 下の句が始まったら並べ直しガイドを引っ込める
+  syncRearrangeGuide()
   _updateUI()
   _emit('shimo_start', _prev, _readCount)
   _play(_prev, 2, () => {
@@ -260,6 +274,8 @@ function _enterShimo(): void {
 function _enterSilence(): void {
   _phase = 'silence'
   _current = null
+  // 序歌の直後は下の句を挟まずここへ来るので、ここでもガイドを引っ込める
+  syncRearrangeGuide()
   _updateUI()
   _emit('silence_start', _next ?? 0, _readCount)
   if (_next !== null) _scheduleHighlights(_next)
@@ -271,6 +287,7 @@ function _enterKami(): void {
   _phase = 'kami'
   _current = _next
   _readCount++
+  syncRearrangeGuide()
   _updateUI()
   _emit('kami_start', _current, _readCount - 1, _effectiveKimariRecord())
 
@@ -301,9 +318,6 @@ function _finishKami(): void {
   _emit('kami_end', done, _readCount - 1)
   clearHighlight()
 
-  // 上の句を読み終えたので、札を並べ直すためのガイドを出す
-  if (getHighlight().rearrangeGuide) setProjectionGuide(true)
-
   // 読まれた札を場から取り除く（場に無ければ何もしない）
   removeCard(done)
 
@@ -311,16 +325,19 @@ function _finishKami(): void {
   _pickNext()
   _current = null
   _phase = null
+
+  // 上の句を読み終えたので、札を並べ直すためのガイドを出す
+  syncRearrangeGuide()
 }
 
 function _endSession(): void {
   _clearTimers()
   clearHighlight()
-  setProjectionGuide(false)
   if (_audio) { _audio.pause(); _audio.onended = null }
   _playing = false
   _phase = null
   _current = null
+  syncRearrangeGuide()
   _emit('session_end', 0, _readCount)
   _updateUI()
 }
@@ -392,6 +409,8 @@ export function stopReading(): void {
   }
 
   _playing = false
+  // 停止している間もチェックが入っていればガイドを出しておく
+  syncRearrangeGuide()
   _updateUI()
 }
 

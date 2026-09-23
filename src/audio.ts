@@ -175,7 +175,10 @@ function _scheduleHighlights(targetId: number): void {
   const maxK = cfg.mode === 'target_only' ? 1 : Math.max(1, kimari.length)
 
   for (let k = 1; k <= maxK; k++) {
+    // 決まり字を読み終える段階。ここで初めて出札が確定する。
+    const isFinal = k === maxK
     const delayMs = Math.max(0, cfg.silenceSec + cfg.leadSec + (k - 1) * cfg.perCharSec) * 1000
+
     _setTimer(() => {
       // 点灯時刻は予約時の値で決まるが、色とモードは発火時の設定を読む
       // （競技タブで読み上げ中に変えてもその場で効くように）
@@ -186,20 +189,27 @@ function _scheduleHighlights(targetId: number): void {
 
       // 決まり字プレフィックスに一致する「場の」札を集める。
       // 母集団は未読札全体だが、光らせられるのは実際に場にある札だけ。
-      // 2枚以上あるうちは候補色でまとめて光らせ、1枚に絞れたときだけ確定色にする
-      // （早い段階で正解が分かってしまわないようにするため）。
-      //
-      // 空札のときも同じ規則で光らせる。ここで色分けを変えてしまうと
-      // 「空札である」ことが見た目から分かってしまい、反応を測る意味がなくなる。
-      // 決まり字が場のどの札とも違う長さまで進むと一致0枚になり、そこで消える。
       const prefix = kimari.slice(0, k)
       const matches = field.filter(id => {
         const t = poems.find(p => p.id === id)?.hiragana ?? ''
         return t.startsWith(prefix)
       })
 
-      if (matches.length === 0) clearHighlight()
-      else if (matches.length === 1) broadcastHighlight(matches, [])
+      if (matches.length === 0) { clearHighlight(); return }
+
+      // 確定色は「出札が決まった瞬間」だけに使う。つまり
+      //   ・読まれた札が場にある（出札である）
+      //   ・決まり字を読み終えた（最終段階）
+      // の両方が揃ったときだけ。
+      //
+      // 場の札が1枚に絞れただけで確定色にしてはいけない。決まり字の母集団は
+      // 未読札全体なので、場では1枚でも未読の空札がまだ残っていることがある。
+      // 例) 場に「なつ」「なにし」、空札「なにわえ」を読むと「なに」の時点で
+      //     場の一致は「なにし」1枚になるが、これは出札ではない。
+      //
+      // それ以外は候補色のままにする。空札のときも同じ規則なので、色から
+      // 「空札である」ことが分かってしまうこともない。
+      if (isFinal && onField) broadcastHighlight([targetId], [])
       else broadcastHighlight([], matches)
     }, delayMs)
   }

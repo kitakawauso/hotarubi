@@ -166,12 +166,12 @@ export function initHighlightPanel(containerSelector: string): void {
 
     <p class="hl-group">並べ直しガイド</p>
     <div class="hl-row">
-      <label style="min-width:auto;" title="陣の外枠と段の区切りを投影します。下の句〜上の句を読んでいる間だけ自動で隠れます">
+      <label style="min-width:auto;" title="陣の外枠と段の区切りを投影します。読み上げが始まると自動で隠れます">
         <input type="checkbox" id="hl-guide"> 表示する
       </label>
     </div>
     <p style="font-size:11px;color:var(--text3);margin:-2px 0 0;line-height:1.6;">
-      停止中・待機中は出したままになり、下の句が読まれると消えます。
+      停止中・待機中だけ出ます。序歌を含め、読み上げが始まると消えます。
     </p>
     <div class="hl-row">
       <label>ガイド色</label>

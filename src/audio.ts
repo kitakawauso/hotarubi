@@ -218,15 +218,12 @@ function _scheduleHighlights(targetId: number): void {
 // ============================================================
 // 並べ直しガイド
 //
-// チェックが入っていれば基本は出しておき、下の句〜上の句を読んでいる間だけ隠す。
-// 停止中・待機中・序歌の間は出したままにする（札を並べ直す時間なので）。
+// チェックが入っていれば、何も読んでいない間（停止中・待機中）だけ出す。
+// 序歌も含め、音が流れている間は隠す。
 // 読み上げの状態が変わったときと、チェックを切り替えたときに呼ぶ。
 // ============================================================
-const GUIDE_HIDDEN_PHASES: Phase[] = ['shimo', 'silence', 'kami']
-
 export function syncRearrangeGuide(): void {
-  const show = getHighlight().rearrangeGuide && !GUIDE_HIDDEN_PHASES.includes(_phase)
-  setProjectionGuide(show)
+  setProjectionGuide(getHighlight().rearrangeGuide && _phase === null)
 }
 
 // ============================================================
@@ -235,6 +232,8 @@ export function syncRearrangeGuide(): void {
 function _enterJoka(): void {
   _phase = 'joka'
   _current = JOUKA_ID
+  // 序歌が始まったらガイドを引っ込める
+  syncRearrangeGuide()
   _updateUI()
   _play(JOUKA_ID, 1, () => {
     _phase = 'joka_silence'
@@ -248,6 +247,8 @@ function _enterJoka(): void {
 function _enterJokaShimo(): void {
   _phase = 'joka_shimo'
   _current = JOUKA_ID
+  // 序歌の下の句から再開した場合もここを通る
+  syncRearrangeGuide()
   _updateUI()
   _play(JOUKA_ID, 2, () => {
     _started = true
@@ -260,7 +261,6 @@ function _enterShimo(): void {
   if (_prev === null) { _enterSilence(); return }
   _phase = 'shimo'
   _current = _prev
-  // 下の句が始まったら並べ直しガイドを引っ込める
   syncRearrangeGuide()
   _updateUI()
   _emit('shimo_start', _prev, _readCount)
@@ -274,7 +274,6 @@ function _enterShimo(): void {
 function _enterSilence(): void {
   _phase = 'silence'
   _current = null
-  // 序歌の直後は下の句を挟まずここへ来るので、ここでもガイドを引っ込める
   syncRearrangeGuide()
   _updateUI()
   _emit('silence_start', _next ?? 0, _readCount)
